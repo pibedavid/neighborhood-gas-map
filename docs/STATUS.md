@@ -15,10 +15,12 @@
 - Added HOA & Atmos Energy dossier export modal with CSV download and formatted text summary for emails and Facebook.
 - Added Cloudflare Pages Function `/api/reports` with KV support and resilient localStorage fallback.
 - Verified production build clean (`npm run build` completed with 0 errors).
-- Committed initial baseline (`710487c`) to `main`.
+- Committed and pushed to GitHub remote: [`https://github.com/pibedavid/neighborhood-gas-map`](https://github.com/pibedavid/neighborhood-gas-map).
+- Authored [`docs/ORIGINAL_REQUEST.md`](file:///c:/Dev/neighborhood-gas-map/docs/ORIGINAL_REQUEST.md) compiling full genesis context, Facebook post text, design decisions, and review prompts for Claude Code (CC) and Codex.
 
 ---
 
-## Active Phase: Ready for Local Preview & Cloudflare Deployment
-- App is running live locally on `http://localhost:3000/`.
-- Ready to push to GitHub / Cloudflare Pages for a public URL (e.g. `gas.galindo.co` or `*.pages.dev`).
+## Active Phase: Peer Review & Cloudflare Pages Live Link
+- **GitHub Repository:** `https://github.com/pibedavid/neighborhood-gas-map` (branch `main`).
+- **Peer Review Ready:** Claude Code and Codex can review [`docs/ORIGINAL_REQUEST.md`](file:///c:/Dev/neighborhood-gas-map/docs/ORIGINAL_REQUEST.md) and [`docs/decisions/settled.md`](file:///c:/Dev/neighborhood-gas-map/docs/decisions/settled.md).
+- **Cloudflare Pages:** Connect repository in Cloudflare Dashboard (Build: `npm run build`, Output: `dist`) to deploy to `*.pages.dev`.
