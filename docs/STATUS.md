@@ -23,11 +23,10 @@
 
 ---
 
-## Active Phase: Git Commit & Cloudflare D1 Binding
+## Active Phase: 2nd Pass Peer Review Ready
 - **GitHub Repository:** [`https://github.com/pibedavid/neighborhood-gas-map`](https://github.com/pibedavid/neighborhood-gas-map) (branch `main`).
 - **Live Cloudflare Pages URL:** [`https://neighborhood-gas-map.pages.dev`](https://neighborhood-gas-map.pages.dev).
-- **Next Operational Step for Dave:**
-  - In Cloudflare Dashboard: **Workers & Pages** → **`neighborhood-gas-map`** → **Settings** → **Bindings** → Add **D1 database** binding:
-    - Variable name: `DB`
-    - D1 Database: `neighborhood-gas-db`
+- **D1 Database Status:** Fully bound (`DB`), table initialized, and verified live via real read/write/delete round-trip probe.
+- **Ready for Review:** Claude Code and Codex can now run their 2nd pass review against commit `1e4a8ac` or latest `main`.
+
 
