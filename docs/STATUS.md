@@ -5,23 +5,20 @@
 ---
 
 ## What Just Happened
-- Initialized fresh git repository at `C:\Dev\neighborhood-gas-map` on branch `main`.
+- Initialized fresh git repository at [`C:\Dev\neighborhood-gas-map`](file:///c:/Dev/neighborhood-gas-map) on branch `main`.
 - Established operational baseline in [`AGENTS.md`](file:///c:/Dev/neighborhood-gas-map/AGENTS.md) adhering to household rules and `worldcup2` multi-agent standards.
-- Grounded exact neighborhood coordinates for Flower Mound, TX (Golden Aspen Dr, Rosewood Trail, the neighborhood pond: `[33.03505, -97.04638]`).
-- Architected decision framework in [`docs/decisions/settled.md`](file:///c:/Dev/neighborhood-gas-map/docs/decisions/settled.md).
+- Grounded exact neighborhood coordinates for Flower Mound, TX (Golden Aspen Dr, Rosewood Trail, and the neighborhood pond: `[33.03505, -97.04638]`).
+- Architected decision framework in [`docs/decisions/settled.md`](file:///c:/Dev/neighborhood-gas-map/docs/decisions/settled.md) and [`docs/decisions/stillopen.md`](file:///c:/Dev/neighborhood-gas-map/docs/decisions/stillopen.md).
+- Built and verified full React 19 + TypeScript + Vite web app with Leaflet interactive mapping.
+- Implemented time-of-day color-coded pins (🌅 Morning, ☀️ Afternoon, 🌆 Evening, 🌙 Night), odor intensity badges, and animated halos for strong reports.
+- Added dual-mode tile toggle between OpenStreetMap street names and high-resolution Esri satellite aerial photography.
+- Added HOA & Atmos Energy dossier export modal with CSV download and formatted text summary for emails and Facebook.
+- Added Cloudflare Pages Function `/api/reports` with KV support and resilient localStorage fallback.
+- Verified production build clean (`npm run build` completed with 0 errors).
+- Committed initial baseline (`710487c`) to `main`.
 
 ---
 
-## Active Phase: Scaffolding Mobile Interactive Map & Cloudflare API
-- Scaffold Vite + React + TypeScript web app with Leaflet map engine.
-- Implement tap-to-drop pin reporting with time-of-day coloring and odor intensity.
-- Implement Cloudflare Pages Function `/api/reports` for saving and retrieving reports.
-- Add HOA & Atmos Energy export dossier feature.
-
----
-
-## Immediate Next Steps
-1. Create `package.json`, Vite configuration, and install dependencies.
-2. Build map components and reporting modal.
-3. Verify local development build and preview.
-4. Prepare Cloudflare Pages configuration for one-click deployment.
+## Active Phase: Ready for Local Preview & Cloudflare Deployment
+- App is running live locally on `http://localhost:3000/`.
+- Ready to push to GitHub / Cloudflare Pages for a public URL (e.g. `gas.galindo.co` or `*.pages.dev`).
