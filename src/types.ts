@@ -46,17 +46,17 @@ export const TIME_OF_DAY_CONFIG: Record<
   morning: {
     label: 'Morning',
     timeRange: '6 AM – 12 PM',
-    color: '#d97706',
-    bg: '#fef3c7',
-    border: '#f59e0b',
+    color: '#eab308',
+    bg: '#fef9c3',
+    border: '#ca8a04',
     emoji: '🌅'
   },
   afternoon: {
     label: 'Afternoon',
     timeRange: '12 PM – 6 PM',
-    color: '#ea580c',
-    bg: '#ffedd5',
-    border: '#f97316',
+    color: '#0284c7',
+    bg: '#e0f2fe',
+    border: '#0369a1',
     emoji: '☀️'
   },
   evening: {
@@ -64,7 +64,7 @@ export const TIME_OF_DAY_CONFIG: Record<
     timeRange: '6 PM – 10 PM',
     color: '#e11d48',
     bg: '#ffe4e6',
-    border: '#f43f5e',
+    border: '#be123c',
     emoji: '🌆'
   },
   night: {
@@ -72,7 +72,7 @@ export const TIME_OF_DAY_CONFIG: Record<
     timeRange: '10 PM – 6 AM',
     color: '#7c3aed',
     bg: '#ede9fe',
-    border: '#8b5cf6',
+    border: '#6d28d9',
     emoji: '🌙'
   }
 };

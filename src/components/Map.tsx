@@ -10,8 +10,8 @@ interface MapProps {
   onSelectReport: (id: string | null) => void;
 }
 
-// Center of Golden Aspen Dr & Pond area in Flower Mound, TX
-const NEIGHBORHOOD_CENTER: [number, number] = [33.03505, -97.04638];
+// Center of the neighborhood (centered between west-side homes and pond/Golden Aspen)
+const NEIGHBORHOOD_CENTER: [number, number] = [33.0352, -97.0482];
 
 export const Map: React.FC<MapProps> = ({
   reports,
@@ -24,7 +24,6 @@ export const Map: React.FC<MapProps> = ({
   const mapInstanceRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
-  const landmarksLayerRef = useRef<L.LayerGroup | null>(null);
 
   // Initialize Map
   useEffect(() => {
@@ -32,7 +31,8 @@ export const Map: React.FC<MapProps> = ({
 
     const map = L.map(mapContainerRef.current, {
       center: NEIGHBORHOOD_CENTER,
-      zoom: 17,
+      zoom: 16.6,
+      zoomSnap: 0.1,
       minZoom: 15,
       maxZoom: 19,
       zoomControl: false
@@ -55,27 +55,6 @@ export const Map: React.FC<MapProps> = ({
     // Layer groups for markers
     const markersGroup = L.layerGroup().addTo(map);
     markersLayerRef.current = markersGroup;
-
-    const landmarksGroup = L.layerGroup().addTo(map);
-    landmarksLayerRef.current = landmarksGroup;
-
-    // Add neighborhood landmark reference labels
-    const landmarks = [
-      { coords: [33.03525, -97.04710] as [number, number], title: '🦆 Neighborhood Pond' },
-      { coords: [33.03530, -97.04655] as [number, number], title: '🪵 Pond Bridge' },
-      { coords: [33.03470, -97.04610] as [number, number], title: '📍 Golden Aspen Dr' },
-      { coords: [33.03575, -97.04750] as [number, number], title: '🌲 Rosewood Trail' }
-    ];
-
-    landmarks.forEach((lm) => {
-      const icon = L.divIcon({
-        className: 'landmark-marker-container',
-        html: `<div class="landmark-label">${lm.title}</div>`,
-        iconSize: [120, 24],
-        iconAnchor: [60, 12]
-      });
-      L.marker(lm.coords, { icon, interactive: false }).addTo(landmarksGroup);
-    });
 
     // Map Click Listener
     map.on('click', (e: L.LeafletMouseEvent) => {
@@ -135,19 +114,17 @@ export const Map: React.FC<MapProps> = ({
 
       const customHtml = `
         <div class="custom-pin" id="pin-${report.id}">
-          ${isStrong ? `<div class="pin-pulse" style="background-color: ${todConf.border};"></div>` : ''}
-          <div class="pin-badge" style="background: ${todConf.color};">
-            ${todConf.emoji}
-          </div>
+          ${isStrong ? `<div class="pin-pulse" style="background-color: ${todConf.color};"></div>` : ''}
+          <div class="pin-badge" style="background: ${todConf.color};"></div>
         </div>
       `;
 
       const icon = L.divIcon({
         className: 'custom-pin-container',
         html: customHtml,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18],
-        popupAnchor: [0, -18]
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+        popupAnchor: [0, -10]
       });
 
       const marker = L.marker([report.lat, report.lng], { icon });

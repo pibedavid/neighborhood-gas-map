@@ -198,10 +198,10 @@ export const Header: React.FC<HeaderProps> = ({
             {(['morning', 'afternoon', 'evening', 'night'] as const).map((tod) => {
               const active = filter.timeOfDay.includes(tod);
               const labels = {
-                morning: '🌅 Morning (6A-12P)',
-                afternoon: '☀️ Afternoon (12P-6P)',
-                evening: '🌆 Evening (6P-10P)',
-                night: '🌙 Night (10P-6A)'
+                morning: '🌅 Morning (Yellow)',
+                afternoon: '☀️ Afternoon (Blue)',
+                evening: '🌆 Evening (Red)',
+                night: '🌙 Night (Purple)'
               };
               return (
                 <button

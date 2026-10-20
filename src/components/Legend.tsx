@@ -47,12 +47,14 @@ export const Legend: React.FC = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span
                     style={{
-                      width: '12px',
-                      height: '12px',
+                      width: '14px',
+                      height: '14px',
                       borderRadius: '50%',
-                      background: conf.border,
-                      boxShadow: `0 0 0 2px ${conf.bg}`,
-                      display: 'inline-block'
+                      background: conf.color,
+                      border: '2px solid #ffffff',
+                      boxShadow: '0 1px 4px rgba(0, 0, 0, 0.3)',
+                      display: 'inline-block',
+                      flexShrink: 0
                     }}
                   />
                   <span style={{ fontSize: '12px', fontWeight: '700', color: '#1e293b' }}>

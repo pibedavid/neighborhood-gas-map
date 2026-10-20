@@ -170,8 +170,21 @@ export const ReportModal: React.FC<ReportModalProps> = ({ initialLocation, onClo
                   >
                     <span style={{ fontSize: '20px' }}>{conf.emoji}</span>
                     <div>
-                      <div style={{ fontSize: '13px', fontWeight: '700', color: conf.color }}>
-                        {conf.label}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: conf.color }}>
+                          {conf.label}
+                        </div>
+                        <span
+                          style={{
+                            width: '10px',
+                            height: '10px',
+                            borderRadius: '50%',
+                            background: conf.color,
+                            border: '1.5px solid #ffffff',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                            display: 'inline-block'
+                          }}
+                        />
                       </div>
                       <div style={{ fontSize: '10px', color: '#64748b' }}>{conf.timeRange}</div>
                     </div>

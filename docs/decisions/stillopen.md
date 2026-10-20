@@ -7,11 +7,7 @@
 ## Active Questions
 
 1. **Subdomain Choice:**
-   - Option A: `gas.galindo.co`
-   - Option B: `smell.galindo.co`
-   - Option C: `neighborhood.galindo.co`
-   - Option D: Use standard `*.pages.dev` link directly (e.g. `neighborhood-gas-map.pages.dev`).
-   - *Status:* Awaiting Dave's preference when ready to bind Cloudflare custom domain.
+   - **Settled:** Dave decided NOT to publish under personal domain `galindo.co`. It will be deployed directly to a clean Cloudflare Pages subdomain (e.g. `neighborhood-gas-map.pages.dev`).
 
 2. **Atmos Direct Hotline Callout:**
    - Include prominent emergency banner at top: *"If you smell strong gas near your meter or home right now, call Atmos Energy immediately at 866-322-8667 or 911."*
