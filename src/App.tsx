@@ -97,7 +97,7 @@ export const App: React.FC = () => {
     setIsPlacingPin(true);
   };
 
-  // GPS Geolocation Handler
+  // GPS Geolocation Handler with Neighborhood Proximity Check
   const handleUseCurrentLocation = () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your mobile browser. Please tap directly on the map.');
@@ -108,12 +108,20 @@ export const App: React.FC = () => {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setIsLocatingGps(false);
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        // Proximity sanity check: approx 2.5 miles from Golden Aspen / Pond area
+        const distDeg = Math.hypot(lat - 33.0352, lng - (-97.0482));
+        if (distDeg > 0.035) {
+          alert(
+            'You seem to be away from the neighborhood right now. Please tap on the map directly where you smelled the gas.'
+          );
+          return;
+        }
+
         setIsPlacingPin(false);
-        const coords = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude
-        };
-        setClickedLocation(coords);
+        setClickedLocation({ lat, lng });
         setEditingReport(null);
         setReportModalOpen(true);
       },
@@ -127,29 +135,44 @@ export const App: React.FC = () => {
 
   // Handle New Report Submit
   const handleAddReport = async (input: NewReportInput) => {
-    const saved = await submitReport(input);
-    setReports((prev) => [saved, ...prev]);
-    setMyReportIds(getMyReportIds());
-    setSelectedReportId(saved.id);
-    setRecentPinnedId(saved.id); // Trigger undo/move toast!
+    try {
+      const saved = await submitReport(input);
+      setReports((prev) => [saved, ...prev]);
+      setMyReportIds(getMyReportIds());
+      setSelectedReportId(saved.id);
+      setRecentPinnedId(saved.id); // Trigger undo/move toast!
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not submit report';
+      alert(`Submission failed: ${msg}. Please try again.`);
+    }
   };
 
   // Handle Report Update (from edit modal)
   const handleUpdateReport = async (id: string, updates: Partial<GasReport>) => {
-    const updated = await updateReport(id, updates);
-    setReports((prev) => prev.map((r) => (r.id === id ? updated : r)));
-    setEditingReport(null);
+    try {
+      const updated = await updateReport(id, updates);
+      setReports((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      setEditingReport(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not update report';
+      alert(`Update failed: ${msg}. Please try again.`);
+    }
   };
 
-  // Handle Delete Report
+  // Handle Delete Report with error handling
   const handleDeleteReport = async (id: string) => {
-    await deleteReport(id);
-    setReports((prev) => prev.filter((r) => r.id !== id));
-    setMyReportIds(getMyReportIds());
-    if (recentPinnedId === id) setRecentPinnedId(null);
-    if (movingReportId === id) {
-      setMovingReportId(null);
-      setMovingCoords(null);
+    try {
+      await deleteReport(id);
+      setReports((prev) => prev.filter((r) => r.id !== id));
+      setMyReportIds(getMyReportIds());
+      if (recentPinnedId === id) setRecentPinnedId(null);
+      if (movingReportId === id) {
+        setMovingReportId(null);
+        setMovingCoords(null);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not delete report';
+      alert(`Delete failed: ${msg}. Please check your connection and try again.`);
     }
   };
 
@@ -170,12 +193,17 @@ export const App: React.FC = () => {
 
   const handleSaveMovedPin = async () => {
     if (!movingReportId || !movingCoords) return;
-    await handleUpdateReport(movingReportId, {
-      lat: movingCoords.lat,
-      lng: movingCoords.lng
-    });
-    setMovingReportId(null);
-    setMovingCoords(null);
+    try {
+      await handleUpdateReport(movingReportId, {
+        lat: movingCoords.lat,
+        lng: movingCoords.lng
+      });
+      setMovingReportId(null);
+      setMovingCoords(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Could not save new location';
+      alert(`Repositioning failed: ${msg}. Please try again.`);
+    }
   };
 
   const handleCancelMovePin = () => {
@@ -185,13 +213,17 @@ export const App: React.FC = () => {
 
   const handleUndoRecent = async () => {
     if (recentPinnedId) {
-      await handleDeleteReport(recentPinnedId);
-      setRecentPinnedId(null);
+      try {
+        await handleDeleteReport(recentPinnedId);
+      } catch {
+        // Handled in handleDeleteReport
+      }
     }
   };
 
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
       {/* Top Header & Emergency Banner */}
       <Header
         reports={filteredReports}

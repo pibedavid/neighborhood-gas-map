@@ -23,26 +23,10 @@
    - Dual-layer toggle: Standard street map (clear street names like Golden Aspen Dr, Rosewood Trail) and Satellite aerial imagery (allows neighbors to spot their exact rooftop, fence line, or tree near the pond).
 3. **Data Storage & Backend:**
    - Cloudflare Pages Functions (`functions/api/reports.ts`).
-   - Backed by Cloudflare KV (`GAS_REPORTS_KV`) in production.
-   - Dual-mode client: Reads from `/api/reports`, with automatic localStorage fallback when running offline or in preview without KV bound.
-
----
-
-## 3. Product Invariants & Pin Schema
-1. **Pin Attributes:**
-   - `id`: Unique string (UUID or timestamp-based)
-   - `lat`: Latitude float
-   - `lng`: Longitude float
-   - `timeOfDay`: `'morning'` | `'afternoon'` | `'evening'` | `'night'`
-   - `timestamp`: Date/time of observation
-   - `intensity`: `'faint'` (hint) | `'moderate'` (clear smell) | `'strong'` (acrid / potent)
-   - `smellType`: `'rotten-egg'` | `'sulfur'` | `'chemical'` | `'other'`
-   - `windCondition`: Calm, light breeze, windy (optional)
-   - `notes`: Description (e.g., "Along the walking path near the wooden bridge")
-   - `reportedBy`: Name, initials, or Anonymous
-   - `createdAt`: ISO timestamp
+   - Backed exclusively by Cloudflare D1 Serverless SQLite (`neighborhood-gas-db`) bound as `DB`.
+   - Returns 503 if D1 is not configured.
 4. **Hosting & Domain:**
-   - Standalone Cloudflare Pages deployment (e.g. `*.pages.dev`).
+   - Standalone Cloudflare Pages deployment at `https://neighborhood-gas-map.pages.dev`.
    - Will NOT be published under personal domain `galindo.co` to keep community project detached.
 
 ---
@@ -86,24 +70,31 @@
 Following peer reviews from Claude Code (`docs/CC_feedback.md`) and Codex (`docs/codex_feedback.md`), four core decisions were settled with Dave:
 
 1. **Storage Engine: Option A — Cloudflare D1 (Serverless SQLite)**
-   - Transitioned from single-key JSON KV to D1 database (`DB` binding) with structured table `reports` (`schema.sql`).
+   - Transitioned to D1 database (`DB` binding) with structured table `reports` (`schema.sql`).
    - Eliminates read-modify-write lost-write race conditions when multiple neighbors submit simultaneously.
-   - Retains KV as a transparent fallback.
+   - Removed dead legacy KV fallback; fails closed with 503 if D1 is not bound.
 2. **Pin Placement UX: Option A — Explicit Placement Mode**
-   - Eliminated the former behavior where clicking "+ Report Smell" defaulted to Dave's house coordinate.
+   - Eliminated default pin drop at Dave's house coordinate.
    - Clicking "+ Report Smell" or "Pin Odor Smell" enters **Placement Mode**, displaying a top banner: *"Tap map where you smelled it"* alongside a *"📍 Use My GPS"* button.
    - Neighbors can tap anywhere on the map or tap "Use My GPS" via `navigator.geolocation.getCurrentPosition`.
 3. **Pin Ownership & Moderation: Option A — Zero-Friction Edit Token**
    - Server mints an unguessable `editToken` (UUID) on `POST /api/reports`, stores its `sha256` hash in D1, and returns the token in the 201 response.
    - Submitting device saves token in `localStorage`. `PUT` and `DELETE` require `X-Edit-Token` matching the hash.
+   - Fail-closed: rows without a hash require admin authorization.
    - "View All" list modal only displays delete buttons for reports owned by the client device.
    - Soft-delete enabled (`is_deleted = 1`) to preserve audit trail for Atmos Energy and HOA.
-4. **Spam & Abuse Protection: Option B — Smart Bot Detection (No Hard Geofence)**
-   - Dave selected Option B: reject GPS-based device coordinate fencing because neighbors frequently view community Facebook threads or report smells while away from home (at work, waiting in line, etc.).
+4. **Spam & Abuse Protection: Option B — Smart Bot Detection + Pin Geofence**
+   - **Device Geofence = NO:** Neighbors can view Facebook threads and submit reports from anywhere (work, travel, car).
+   - **Pin Coordinate Geofence = YES:** The pin location itself must fall within the Flower Mound neighborhood boundary (approx ±0.025° lat/lng around Golden Aspen & Pond, ~2.5 miles). Worldwide/junk coordinates are rejected.
+   - **Client Proximity Check:** If a user taps "Use My GPS" while away from the neighborhood (> 2.5 miles), the app alerts them to tap the map location where the smell occurred instead of placing a pin at their remote GPS fix.
    - Protected via Cloudflare Turnstile (Managed/Invisible mode) and server-side request size / field validation.
-5. **Security & Data Integrity Fixes:**
+5. **Shared Validation for POST & PUT:**
+   - Both creation and update endpoints pass through a single unified server validator enforcing finite numbers, neighborhood bounding box, enums (`timeOfDay`, `intensity`, `smellType`, `windCondition`), calendar date (`YYYY-MM-DD` within 90 days), and strict text length limits.
+6. **Security & Data Integrity Fixes:**
    - **Neutralized Stored XSS:** Popups built strictly using DOM nodes and `textContent`.
    - **Neutralized CSV Injection & Truncation:** Export uses UTF-8 BOM (`\uFEFF`) + Blob object URL, escaping spreadsheet formula triggers (`=`, `+`, `-`, `@`).
    - **Local Date Handling:** Date defaults to local browser time zone (`en-CA` format) via `getLocalTodayDate()` rather than UTC, fixing date rollover after 7:00 PM CDT.
    - **Popups vs Map Click:** Guard prevents map click event from reopening the report modal when closing a marker popup.
+   - **Mobile Viewport dvh:** Uses dynamic viewport height (`100dvh`) to avoid shifting under mobile browser navigation bars.
+
 

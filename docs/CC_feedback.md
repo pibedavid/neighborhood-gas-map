@@ -262,3 +262,137 @@ Items 1–3 are small, roughly an afternoon of work. Items 4–6 are another ses
 ---
 
 *CC is available to implement any of these on a `feature/` branch for Dave's review. Codex's adversarial/privacy review should cover overlapping areas (P0-3, P0-4, §5) independently. Disagreements are welcome and should be captured in `docs/decisions/stillopen.md`.*
+
+---
+---
+
+# 2nd Pass
+
+**Date:** October 20, 2026 (evening)
+**Commit reviewed:** `6d95b38` (`main`). I confirmed the live site serves the same bundle as a local build of this commit (`index-BsVthRrT.js`).
+**Method:** Re-read every changed file (`functions/api/reports.ts`, `schema.sql`, `src/services/api.ts`, `Map.tsx`, `App.tsx`, `ExportModal.tsx`, `ReportListModal.tsx`, `ReportModal.tsx`) and checked each first-pass item against the code. I rebuilt the app (clean: 422 KB / 127 KB gzip) and probed the live API with requests that **cannot create or change data**: GETs, and writes the server rejects before touching the DB. I did **not** POST a valid report, so I couldn't test the Turnstile bypass or a full create→edit→delete cycle live. Those conclusions come from the code.
+
+## 2P-0. Verdict
+
+**Big improvement. The four worst problems are fixed, and the app is now safe to share with neighbors you know.** The shared map works (D1 is bound and verified), the popup injection hole is closed, and other people's pins can no longer be deleted or edited. Before promoting it widely (re-sharing, the HOA page, a Nextdoor post), close the **three remaining high items** in §2P-2: bot/spam protection isn't actually switched on, edits skip validation, and the "Use My GPS" button will happily pin someone's office in Dallas.
+
+STATUS.md says the review items were fixed. That's accurate for the security blockers, but most of the mobile, UX, privacy, and docs items from the first pass are **not started** (those files are unchanged). See §2P-4.
+
+### Live probe results
+
+| Probe (non-mutating) | Result | Verdict |
+|---|---|---|
+| `GET /api/reports` | `200 []` with `Cache-Control: no-cache` (D1 branch) | ✅ D1 bound; DB currently empty |
+| `PUT` with nonexistent id | `404 Report not found` | ✅ D1 path (the KV/unbound path would return 200) |
+| `DELETE` nonexistent id, no token | `404` | ✅ |
+| `POST` with `timeOfDay:"x"` | `400 Invalid timeOfDay value` | ✅ |
+| `POST` with `lat:"abc"` | `400 Valid numerical coordinates required` | ✅ |
+| `POST` with malformed JSON | `500` with raw parser message | ⚠️ should be `400` with a generic message |
+| GET response fields | No `editToken`/hash exposed | ✅ |
+| Security headers | Only `x-content-type-options: nosniff` and `referrer-policy` | ⚠️ no CSP / `noindex` |
+
+## 2P-1. First-pass items: scorecard
+
+| Item | Status | Notes |
+|---|---|---|
+| P0-1 KV unbound, silent data loss | ✅ **Fixed** (live) | D1 bound. Client no longer falls back to localStorage in prod. The server's "no storage" branch still returns `201` (see 2P-2.4) |
+| P0-2 Stored XSS | ✅ **Fixed** | Popup built with DOM nodes + `textContent` ([Map.tsx](../src/components/Map.tsx)). List modal was already safe |
+| P0-3 Anyone can delete/edit | ✅ **Fixed** on D1 path | Per-pin `editToken`, SHA-256 hash on server, soft delete, list modal delete restricted to own pins. Small fail-open gap: 2P-2.5 |
+| P0-4 200-cap wipe / spam | 🟡 **Partial** | Cap removed and data preserved (D1 + soft delete) ✅. But **no working bot protection or rate limit** (2P-2.1), and GET's `LIMIT 500` means spam can still push real pins off the map |
+| P0-5 Bad record crashes map | 🟡 **Mostly fixed** | POST validates `timeOfDay`/`intensity`/coords. Client falls back safely for bad enums and coords. **PUT does no validation** (2P-2.2). No error boundary |
+| P1-1 KV lost writes | ✅ **Fixed** | One row per report in D1 |
+| P1-2 Default to Dave's corner | ✅ **Fixed** | Placement mode + "Use My GPS". The fallback coordinate still sits in [ReportModal.tsx:32](../src/components/ReportModal.tsx#L32) as dead code; replace it with a guard |
+| P1-3 UTC date / data quality | 🟡 **Partial** | Local date ✅. Free-text time, independent time-of-day, and default-value bias (moderate / rotten-egg / light breeze) **not changed** |
+| P1-4 Fake seed pins | ✅ **Fixed** | Seeds removed and legacy `seed-*` filtered out |
+| P1-5 Drag-to-move broken | ✅ **Fixed in code** | Marker rebuild no longer depends on `movingCoords`; position synced via `setLatLng`. Still needs a phone test |
+| P1-6 Popup dismiss opens modal | ✅ **Fixed** | 250 ms `popupclose` guard. Leaflet closes the popup on `preclick`, so the guard catches it |
+| P1-7 CSV `#` truncation / injection | ✅ **Fixed** | Blob + BOM + formula prefix + uniform quoting. `windDirection` still not exported (minor) |
+
+## 2P-2. Remaining & new issues (by priority)
+
+### 2P-2.1 🟠 HIGH: Turnstile isn't active, and there's no rate limit
+
+- **Server:** verification only runs `if (TURNSTILE_SECRET_KEY && body.turnstileToken)` ([reports.ts:153](../functions/api/reports.ts#L153)). A request that **omits** the token skips the check entirely. It's opt-in for attackers.
+- **Client:** there's no Turnstile widget or script anywhere (`index.html` and `src/`), and `handleAddReport` calls `submitReport(input)` with no token ([App.tsx](../src/App.tsx)). So even honest neighbors never send one.
+- No rate limit exists either. One script can insert thousands of rows. D1 keeps them (good), but `GET … LIMIT 500` means 500 junk rows hide every real report from the map **and from the HOA/Atmos export**, since the export uses the same list.
+
+**Fix:** (a) If the secret is configured, **require** the token: missing → `403`. (b) Add the Turnstile widget in invisible/managed mode and pass the token through `submitReport`. (c) Add a Cloudflare WAF rate-limiting rule on `POST /api/reports` (for example 5 per IP per 10 min). This is dashboard-only with no code. The `turnstile-spin` skill can do (a) and (b) end to end. Keep the Turnstile secret as a Pages secret, not in a file.
+
+### 2P-2.2 🟠 HIGH: `PUT` skips all validation
+
+Anyone can create one pin, get its edit token, then `PUT` arbitrary values ([reports.ts:351–361](../functions/api/reports.ts#L351-L361)):
+- `timeOfDay`, `intensity`, `smellType`, `windCondition`, `observedDate`, `observedTime` accept **any string of any length** (no enum check, no cap). Only notes, name, and wind direction are capped.
+- `lat`/`lng`: `Number("abc")` gives `NaN`, and there's no range check, so `lat: 999` is accepted.
+- POST has the same unbounded-length issue for `smellType`, `windCondition`, and `observedDate`. There's also no overall body-size limit. A few multi-megabyte rows would make every neighbor's phone download megabytes on each page load.
+
+The client's enum fallbacks stop the crash, but the record shown in the dossier would be garbage. **Fix:** write a single `validateReport(input, {partial})` function used by both POST and PUT: enums for all four categorical fields, `YYYY-MM-DD` date (not in the future, not more than ~90 days back), time ≤ 20 chars, finite coords in a bounding box (see 2P-2.3), and reject bodies over ~4 KB (`content-length` check) before parsing.
+
+### 2P-2.3 🟠 HIGH: "Use My GPS" and the geofence decision
+
+Settled decision #4 rejected "device GPS geofencing" so neighbors can report from work. That's reasonable, but it merges two different things:
+- **Device location** ("where is the phone now"): correctly *not* required.
+- **Pin location** ("where is the pin"): this *should* be limited to the neighborhood. A pin in Dallas is never a valid report about the Golden Aspen pond, no matter where the reporter is sitting. The server currently accepts any coordinate on Earth ([reports.ts:176](../functions/api/reports.ts#L176)).
+
+The two interact badly. The exact scenario the decision was meant to support ("I'm at work, let me report the smell from this morning") is the one where **"Use My GPS" is wrong**: it pins the office. Then `handleUseCurrentLocation` in [App.tsx](../src/App.tsx) opens the form immediately without showing where the pin landed.
+
+**Fix:**
+1. Server: reject pin coordinates outside a generous neighborhood box (for example ±0.015° lat / ±0.018° lng around `[33.0352, -97.0482]`, about 1.5 km). This limits the *pin*, not the reporter.
+2. Client: if the GPS fix is more than ~800 m from the neighborhood, don't open the form. Show "You seem to be away from the neighborhood. Tap the map where you smelled it instead." Otherwise, `flyTo` the GPS point and show a draggable preview pin with **Confirm** before opening the form. GPS on phones can be off by 20–50 m, which matters for "which side of the pond".
+3. Ask Dave to record the clarified decision in `settled.md` (pin geofence yes, device geofence no).
+
+### 2P-2.4 🟡 MEDIUM: Server still "succeeds" when storage is missing, and the KV fallback is still the old insecure code
+
+- If `DB` (and KV) are ever unbound (for example a new Pages environment, preview branch, or binding typo), `POST` still returns **`201` with an edit token** while saving nothing ([reports.ts:218–288](../functions/api/reports.ts#L218-L288)). `PUT` returns `200` echoing the body ([reports.ts:407](../functions/api/reports.ts#L407)), and `DELETE` returns success. That's the original P0-1 failure mode, now one binding mistake away.
+- The **KV fallback** paths keep the first-pass problems: PUT spreads `...body` with **no token check** ([reports.ts:391–405](../functions/api/reports.ts#L391-L405)), DELETE has no token check and hard-deletes ([reports.ts:484–491](../functions/api/reports.ts#L484-L491)), and writes are read-modify-write.
+
+**Fix:** delete the KV fallback entirely, since it's unused and only adds risk, and return `503 {"error":"Storage not configured"}` when `DB` is missing. Also commit a `wrangler.toml` with the D1 binding (IDs aren't secrets), so the binding is in version control.
+
+### 2P-2.5 🟡 MEDIUM: Token check fails open for rows without a hash
+
+`if (existing.edit_token_hash && clientHash !== existing.edit_token_hash)` ([reports.ts:343](../functions/api/reports.ts#L343), [:463](../functions/api/reports.ts#L463)) means any row with a NULL hash can be edited or deleted by **anyone who sends any token**. No such rows exist today (the DB is empty and POST always sets one). But a row Dave adds by hand in the D1 console, or a future import, would be open to everyone. Fail closed: no hash means admin-only.
+
+### 2P-2.6 🟡 MEDIUM: Failed delete/move/undo give no feedback
+
+`deleteReport` and `updateReport` now correctly throw on server errors. But `handleDeleteReport`, `handleUndoRecent`, and `handleSaveMovedPin` in [App.tsx](../src/App.tsx) have no `try/catch`, so a failure (bad network on a walk, expired token after clearing browser data) becomes an unhandled promise rejection. The **Undo** button looks like it did nothing, and the move banner stays stuck. Catch the error and show a toast ("Couldn't delete, check your connection and try again"). The report form already handles this well; copy that pattern.
+
+### 2P-2.7 🟢 LOW: smaller items
+
+- **Malformed JSON returns `500`** with the raw parser message. It should return `400`. All error responses still echo `err.message`; return a generic message.
+- **`ensureD1Table` runs `CREATE TABLE IF NOT EXISTS` on every request**, which adds an extra DB round trip to every GET. The indexes in `schema.sql` are only created if someone ran that file. Apply `schema.sql` once with `wrangler d1 execute` and drop the per-request call.
+- **Server default `observedDate`** still uses UTC ([reports.ts:208](../functions/api/reports.ts#L208)). The client always sends a date, so this matters little, but it's the same bug as P1-3.
+- **Admin key:** `ADMIN_API_KEY` via the `X-Admin-Key` header works for Dave through curl or the D1 console. That's fine for now, but there's no admin UI, and the comparison isn't constant-time (low risk at this scale). If it's set, make sure the value lives in Bitwarden (`bws`) and as a Pages **secret**, not a plain variable. Cloudflare Access remains the nicer long-term option.
+- **Tap-to-pin outside placement mode** still opens the form on any map tap, so placement mode adds an option without making it mandatory. That's acceptable since nothing saves without Submit, but consider making the map passive (pan/zoom only) unless you're in placement or move mode. That removes surprise forms while panning.
+- `selectedReportId` still isn't cleared on popup close, so the last popup can re-open when the list refreshes.
+- `functions/` still isn't type-checked (`tsconfig.json` includes only `src`). That would have caught nothing here, but it's free insurance.
+
+## 2P-3. What I'd still test on a real phone (inside the Facebook app)
+
+These are from the first-pass test plan (§9) and still unverified in a real browser:
+- #1/#2: two phones see each other's pins, including near-simultaneous submits.
+- #8: drag-to-move with a finger (the code fix looks right, but Leaflet drag on touch is the thing to watch).
+- #9: tap away from a popup. No form should open.
+- #10: CSV with `#`, quotes, commas, newlines, and `=SUM(1)` opens cleanly in Excel.
+- New: deny location permission on "Use My GPS". Expect the alert and still being able to tap the map.
+- New: clear site data (or use a different browser), then try to delete an old pin. The delete button shouldn't appear, and a forced attempt should show a clear error.
+
+## 2P-4. First-pass items not yet started
+
+These files are unchanged since the first pass. None of these block a soft launch, but together they decide whether older or less technical neighbors can use the app comfortably on a phone. Full details are in the first-pass sections.
+
+- **§3 Mobile / Facebook webview (all 10 items):** `100vh` → `100dvh` + safe-area (floating bar can hide under the toolbar); oversized header on phones; legend overlapping the floating bar at 375 px; `user-scalable=no` still set; 16 px pins with 20 px hit areas; small popup buttons; clipboard/download fallbacks in the webview.
+- **§4 UX:** intensity not visible on the map (`haloSize` unused); no date-range filter (high value for showing Atmos whether this is ongoing); export tile colors still don't match the map (Afternoon orange vs blue); list/export sorted by submit time, not observation time; no auto-refresh; `window.confirm` for delete; modal accessibility (div-based time cards, no Escape/focus trap, no `aria-label`s).
+- **§5 Privacy:** name placeholder still suggests "Dave G., Neighbor on Rosewood Trail"; no "everything here is public" notice; no `noindex`; no CSP (`public/_headers`). Codex raised the same privacy and retention points; the decision is still open.
+- **§6 Engineering:** no `wrangler.toml`, no tests. Even a handful of Vitest cases on the validator and CSV builder would have caught 2P-2.2.
+- **§7 Docs:** AGENTS.md lines 13 and 51 still say `gas.galindo.co`. `settled.md` still has two conflicting "§3 Product Invariants" sections. `stillopen.md` still lists #1 and #2 (settled) and #3 (moderation, now answered by edit tokens + soft delete + admin key). Move them to `settled.md`.
+- **Process:** all fixes again went straight to `main`, which auto-deploys to the live link neighbors use. For the next round, use a `feature/` branch so Cloudflare produces a preview URL to test on a phone before merging.
+
+## 2P-5. Suggested next round (in order)
+
+1. **Make bot protection real:** Turnstile required + widget wired + WAF rate-limit rule (2P-2.1).
+2. **One shared validator for POST and PUT**, plus a pin geofence and body-size cap (2P-2.2, 2P-2.3 server part).
+3. **GPS sanity check and confirm-preview** (2P-2.3 client part).
+4. **Remove the KV fallback**, return 503 without `DB`, fail closed on a missing hash, and commit `wrangler.toml` (2P-2.4, 2P-2.5).
+5. **Error toasts** for delete/move/undo (2P-2.6).
+6. Mobile layout pass (`dvh`, compact header, collapsed legend, tap targets, re-enable zoom), then the §4/§5 items.
+
+Items 1–5 are a short session. After that, I'd consider the app fully ready for wide sharing.

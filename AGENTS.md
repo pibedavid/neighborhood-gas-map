@@ -10,7 +10,7 @@ This is the canonical operating rulebook for all AI collaborators working in `C:
 ## 1. Operating Rules (Non-Negotiable)
 
 1. **Git Workflow:**
-   - `main` is production (deployed to Cloudflare Pages / `gas.galindo.co`).
+   - `main` is production (deployed to Cloudflare Pages at `neighborhood-gas-map.pages.dev`).
    - Feature additions or substantial refactors occur on `feature/<name>` branches.
    - Dave is the sole release authority for merging to `main`.
 2. **The Shared Whiteboard:**
@@ -47,5 +47,5 @@ This is the canonical operating rulebook for all AI collaborators working in `C:
 - **Mapping:** Leaflet + React-Leaflet (with OpenStreetMap & Esri Satellite aerial imagery)
 - **Styling:** Modern Vanilla CSS / Tailwind with responsive bottom-sheets and glassmorphism
 - **Edge Backend:** Cloudflare Pages Functions (`functions/api/reports.ts`)
-- **Storage:** Cloudflare KV (`GAS_REPORTS_KV`) with resilient fallback
-- **Hosting:** Cloudflare Pages (`gas.galindo.co` or `*.pages.dev`)
+- **Storage:** Cloudflare D1 Serverless SQLite (`neighborhood-gas-db`)
+- **Hosting:** Cloudflare Pages (`https://neighborhood-gas-map.pages.dev`)

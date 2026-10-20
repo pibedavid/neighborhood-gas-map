@@ -1,9 +1,8 @@
 // Cloudflare Pages Function: /api/reports
-// Supports Cloudflare D1 (Serverless SQLite) and KV fallback
+// Backed exclusively by Cloudflare D1 (Serverless SQLite)
 
 interface Env {
   DB?: D1Database;
-  GAS_REPORTS_KV?: KVNamespace;
   TURNSTILE_SECRET_KEY?: string;
   ADMIN_API_KEY?: string;
 }
@@ -25,6 +24,20 @@ interface ReportRow {
   is_deleted?: number;
   created_at: string;
   updated_at?: string | null;
+}
+
+interface ValidatedReportFields {
+  lat: number;
+  lng: number;
+  timeOfDay: string;
+  observedDate: string;
+  observedTime: string;
+  intensity: string;
+  smellType: string;
+  windCondition: string;
+  windDirection: string | null;
+  notes: string;
+  reportedBy: string;
 }
 
 async function sha256(text: string): Promise<string> {
@@ -53,220 +66,79 @@ function formatClientReport(row: ReportRow) {
   };
 }
 
-// Ensure table exists on first run
-async function ensureD1Table(db: D1Database) {
-  await db
-    .prepare(`
-      CREATE TABLE IF NOT EXISTS reports (
-        id TEXT PRIMARY KEY,
-        lat REAL NOT NULL,
-        lng REAL NOT NULL,
-        time_of_day TEXT NOT NULL,
-        observed_date TEXT NOT NULL,
-        observed_time TEXT NOT NULL,
-        intensity TEXT NOT NULL,
-        smell_type TEXT NOT NULL,
-        wind_condition TEXT NOT NULL,
-        wind_direction TEXT,
-        notes TEXT,
-        reported_by TEXT,
-        edit_token_hash TEXT,
-        is_deleted INTEGER DEFAULT 0,
-        created_at TEXT NOT NULL,
-        updated_at TEXT
-      )
-    `)
-    .run();
-}
+// Single Shared Validator for both POST (Create) and PUT (Update)
+function validateReportFields(
+  body: Record<string, unknown>,
+  existing?: ReportRow
+): { valid: true; data: ValidatedReportFields } | { valid: false; error: string } {
+  // 1. Coordinates Validation
+  const lat = body.lat !== undefined ? Number(body.lat) : (existing ? Number(existing.lat) : NaN);
+  const lng = body.lng !== undefined ? Number(body.lng) : (existing ? Number(existing.lng) : NaN);
 
-
-// ----------------------------------------------------
-// GET /api/reports
-// ----------------------------------------------------
-export const onRequestGet: PagesFunction<Env> = async (context) => {
-  const db = context.env.DB;
-  const kv = context.env.GAS_REPORTS_KV;
-
-  if (db) {
-    try {
-      await ensureD1Table(db);
-      const { results } = await db
-        .prepare('SELECT * FROM reports WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 500')
-        .all<ReportRow>();
-
-      const clientReports = (results || []).map(formatClientReport);
-      return new Response(JSON.stringify(clientReports), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache'
-        }
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return new Response(JSON.stringify({ error: msg }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
+  if (isNaN(lat) || isNaN(lng) || !isFinite(lat) || !isFinite(lng)) {
+    return { valid: false, error: 'Valid numerical coordinates are required' };
   }
 
-  // Fallback to KV if bound
-  if (kv) {
-    try {
-      const raw = await kv.get('all_gas_reports');
-      const reports = raw ? JSON.parse(raw) : [];
-      return new Response(JSON.stringify(reports), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache'
-        }
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return new Response(JSON.stringify({ error: msg }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
+  // Pin geofence: Confines pin drops to the Flower Mound neighborhood & trails (approx 2.5 miles)
+  if (lat < 33.01 || lat > 33.06 || lng < -97.08 || lng > -97.02) {
+    return {
+      valid: false,
+      error: 'Pin coordinates must be within the Flower Mound neighborhood area (Golden Aspen / Pond vicinity)'
+    };
   }
 
-  // Local/unbound fallback: return empty list with header
-  return new Response(JSON.stringify([]), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json', 'X-Storage': 'unbound' }
-  });
-};
+  // 2. Strict Enum Validations
+  const timeOfDay = String(body.timeOfDay ?? (existing ? existing.time_of_day : 'morning'));
+  if (!['morning', 'afternoon', 'evening', 'night'].includes(timeOfDay)) {
+    return { valid: false, error: 'Invalid timeOfDay: must be morning, afternoon, evening, or night' };
+  }
 
-// ----------------------------------------------------
-// POST /api/reports
-// ----------------------------------------------------
-export const onRequestPost: PagesFunction<Env> = async (context) => {
-  const db = context.env.DB;
-  const kv = context.env.GAS_REPORTS_KV;
+  const intensity = String(body.intensity ?? (existing ? existing.intensity : 'moderate'));
+  if (!['faint', 'moderate', 'strong'].includes(intensity)) {
+    return { valid: false, error: 'Invalid intensity: must be faint, moderate, or strong' };
+  }
 
-  try {
-    const body = (await context.request.json()) as Record<string, unknown>;
+  const smellType = String(body.smellType ?? (existing ? existing.smell_type : 'rotten-egg'));
+  if (!['rotten-egg', 'sulfur', 'chemical', 'other'].includes(smellType)) {
+    return { valid: false, error: 'Invalid smellType: must be rotten-egg, sulfur, chemical, or other' };
+  }
 
-    // 1. Bot Protection (Turnstile if secret is configured)
-    if (context.env.TURNSTILE_SECRET_KEY && body.turnstileToken) {
-      const verifyRes = await fetch(
-        'https://challenges.cloudflare.com/turnstile/v0/siteverify',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `secret=${encodeURIComponent(
-            context.env.TURNSTILE_SECRET_KEY
-          )}&response=${encodeURIComponent(body.turnstileToken as string)}`
-        }
-      );
-      const outcome = (await verifyRes.json()) as { success: boolean };
-      if (!outcome.success) {
-        return new Response(
-          JSON.stringify({ error: 'Turnstile verification failed' }),
-          { status: 403, headers: { 'Content-Type': 'application/json' } }
-        );
-      }
-    }
+  const windCondition = String(body.windCondition ?? (existing ? existing.wind_condition : 'light-breeze'));
+  if (!['light-breeze', 'calm', 'windy', 'unknown'].includes(windCondition)) {
+    return { valid: false, error: 'Invalid windCondition: must be light-breeze, calm, windy, or unknown' };
+  }
 
-    // 2. Schema Validation
-    const lat = Number(body.lat);
-    const lng = Number(body.lng);
-    if (isNaN(lat) || isNaN(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
-      return new Response(
-        JSON.stringify({ error: 'Valid numerical coordinates required' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+  // 3. Strict Date Validation (YYYY-MM-DD, within 90 days, not in future)
+  const observedDate = String(body.observedDate ?? (existing ? existing.observed_date : ''));
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(observedDate)) {
+    return { valid: false, error: 'Invalid observedDate format: must be YYYY-MM-DD' };
+  }
+  const dateObj = new Date(observedDate + 'T00:00:00Z');
+  if (isNaN(dateObj.getTime())) {
+    return { valid: false, error: 'Invalid calendar date' };
+  }
+  const now = Date.now();
+  const maxFuture = now + 86400000 * 2; // 2 days leeway for time zones
+  const maxPast = now - 86400000 * 90; // Within past 90 days
+  if (dateObj.getTime() > maxFuture || dateObj.getTime() < maxPast) {
+    return { valid: false, error: 'Date must be within the last 90 days and not in the future' };
+  }
 
-    const timeOfDay = String(body.timeOfDay || 'morning');
-    if (!['morning', 'afternoon', 'evening', 'night'].includes(timeOfDay)) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid timeOfDay value' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+  // 4. String Length Limits
+  const observedTime = String(body.observedTime ?? (existing ? existing.observed_time : 'Approx. Sighting')).substring(0, 40);
+  const windDirection = body.windDirection !== undefined
+    ? (body.windDirection ? String(body.windDirection).substring(0, 60) : null)
+    : (existing ? existing.wind_direction : null);
+  const notes = body.notes !== undefined
+    ? String(body.notes || '').substring(0, 500)
+    : (existing ? existing.notes || '' : '');
+  const reportedBy = body.reportedBy !== undefined
+    ? (String(body.reportedBy || '').trim().substring(0, 80) || 'Anonymous Neighbor')
+    : (existing ? existing.reported_by || 'Anonymous Neighbor' : 'Anonymous Neighbor');
 
-    const intensity = String(body.intensity || 'moderate');
-    if (!['faint', 'moderate', 'strong'].includes(intensity)) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid intensity value' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const smellType = String(body.smellType || 'rotten-egg');
-    const windCondition = String(body.windCondition || 'light-breeze');
-    const windDirection = body.windDirection
-      ? String(body.windDirection).substring(0, 60)
-      : null;
-    const notes = body.notes ? String(body.notes).substring(0, 500) : '';
-    const reportedBy = body.reportedBy
-      ? String(body.reportedBy).substring(0, 80)
-      : 'Anonymous Neighbor';
-    const observedDate = String(body.observedDate || new Date().toISOString().split('T')[0]);
-    const observedTime = String(body.observedTime || 'Approx. Sighting').substring(0, 30);
-
-    // 3. Generate authoritative server-side IDs and private editToken
-    const id = 'rep-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8);
-    const editToken = crypto.randomUUID();
-    const editTokenHash = await sha256(editToken);
-    const createdAt = new Date().toISOString();
-
-    // 4. Persist in D1
-    if (db) {
-      await ensureD1Table(db);
-      await db
-        .prepare(`
-          INSERT INTO reports (
-            id, lat, lng, time_of_day, observed_date, observed_time,
-            intensity, smell_type, wind_condition, wind_direction,
-            notes, reported_by, edit_token_hash, is_deleted, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-        `)
-        .bind(
-          id,
-          lat,
-          lng,
-          timeOfDay,
-          observedDate,
-          observedTime,
-          intensity,
-          smellType,
-          windCondition,
-          windDirection,
-          notes,
-          reportedBy,
-          editTokenHash,
-          createdAt
-        )
-        .run();
-    } else if (kv) {
-      // Fallback KV save
-      const raw = await kv.get('all_gas_reports');
-      const reports = raw ? JSON.parse(raw) : [];
-      reports.unshift({
-        id,
-        lat,
-        lng,
-        timeOfDay,
-        observedDate,
-        observedTime,
-        intensity,
-        smellType,
-        windCondition,
-        windDirection,
-        notes,
-        reportedBy,
-        createdAt,
-        editTokenHash
-      });
-      await kv.put('all_gas_reports', JSON.stringify(reports));
-    }
-
-    const clientResponse = {
-      id,
+  return {
+    valid: true,
+    data: {
       lat,
       lng,
       timeOfDay,
@@ -275,11 +147,164 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       intensity,
       smellType,
       windCondition,
-      windDirection: windDirection || undefined,
+      windDirection,
       notes,
-      reportedBy,
+      reportedBy
+    }
+  };
+}
+
+async function parseJsonBody(request: Request): Promise<Record<string, unknown> | null> {
+  try {
+    return (await request.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+// ----------------------------------------------------
+// GET /api/reports
+// ----------------------------------------------------
+export const onRequestGet: PagesFunction<Env> = async (context) => {
+  const db = context.env.DB;
+  if (!db) {
+    return new Response(JSON.stringify({ error: 'Storage not configured: missing D1 DB binding' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  try {
+    const { results } = await db
+      .prepare('SELECT * FROM reports WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 500')
+      .all<ReportRow>();
+
+    const clientReports = (results || []).map(formatClientReport);
+    return new Response(JSON.stringify(clientReports), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache'
+      }
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ error: 'Database query failed', details: msg }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+};
+
+// ----------------------------------------------------
+// POST /api/reports (Submit Sighting)
+// ----------------------------------------------------
+export const onRequestPost: PagesFunction<Env> = async (context) => {
+  const db = context.env.DB;
+  if (!db) {
+    return new Response(JSON.stringify({ error: 'Storage not configured: missing D1 DB binding' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const body = await parseJsonBody(context.request);
+  if (!body) {
+    return new Response(JSON.stringify({ error: 'Malformed JSON payload' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Bot Protection (Turnstile if secret is configured in Pages environment)
+  if (context.env.TURNSTILE_SECRET_KEY) {
+    const token = body.turnstileToken;
+    if (!token || typeof token !== 'string') {
+      return new Response(JSON.stringify({ error: 'Turnstile verification token required' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    try {
+      const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `secret=${encodeURIComponent(context.env.TURNSTILE_SECRET_KEY)}&response=${encodeURIComponent(token)}`
+      });
+      const outcome = (await verifyRes.json()) as { success: boolean };
+      if (!outcome.success) {
+        return new Response(JSON.stringify({ error: 'Turnstile bot challenge failed' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    } catch {
+      return new Response(JSON.stringify({ error: 'Bot verification service unavailable' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
+
+  // Schema Validation via Shared Validator
+  const validation = validateReportFields(body);
+  if (!validation.valid) {
+    return new Response(JSON.stringify({ error: validation.error }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  const f = validation.data;
+
+  // Authoritative server-side ID & private editToken
+  const id = 'rep-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8);
+  const editToken = crypto.randomUUID();
+  const editTokenHash = await sha256(editToken);
+  const createdAt = new Date().toISOString();
+
+  try {
+    await db
+      .prepare(`
+        INSERT INTO reports (
+          id, lat, lng, time_of_day, observed_date, observed_time,
+          intensity, smell_type, wind_condition, wind_direction,
+          notes, reported_by, edit_token_hash, is_deleted, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+      `)
+      .bind(
+        id,
+        f.lat,
+        f.lng,
+        f.timeOfDay,
+        f.observedDate,
+        f.observedTime,
+        f.intensity,
+        f.smellType,
+        f.windCondition,
+        f.windDirection,
+        f.notes,
+        f.reportedBy,
+        editTokenHash,
+        createdAt
+      )
+      .run();
+
+    const clientResponse = {
+      id,
+      lat: f.lat,
+      lng: f.lng,
+      timeOfDay: f.timeOfDay,
+      observedDate: f.observedDate,
+      observedTime: f.observedTime,
+      intensity: f.intensity,
+      smellType: f.smellType,
+      windCondition: f.windCondition,
+      windDirection: f.windDirection || undefined,
+      notes: f.notes,
+      reportedBy: f.reportedBy,
       createdAt,
-      editToken // Private token returned to authoring device only!
+      editToken // Private token returned to authoring device only
     };
 
     return new Response(JSON.stringify(clientResponse), {
@@ -288,7 +313,7 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: msg }), {
+    return new Response(JSON.stringify({ error: 'Failed to insert report', details: msg }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -300,117 +325,118 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
 // ----------------------------------------------------
 export const onRequestPut: PagesFunction<Env> = async (context) => {
   const db = context.env.DB;
-  const kv = context.env.GAS_REPORTS_KV;
+  if (!db) {
+    return new Response(JSON.stringify({ error: 'Storage not configured: missing D1 DB binding' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const body = await parseJsonBody(context.request);
+  if (!body) {
+    return new Response(JSON.stringify({ error: 'Malformed JSON payload' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  const id = String(body.id || '');
+  if (!id) {
+    return new Response(JSON.stringify({ error: 'Missing report id' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
+  // Authorization: X-Edit-Token or X-Admin-Key
+  const clientToken = context.request.headers.get('X-Edit-Token') || (body.editToken as string);
+  const adminKey = context.request.headers.get('X-Admin-Key');
+  const isAdmin = Boolean(context.env.ADMIN_API_KEY && adminKey === context.env.ADMIN_API_KEY);
 
   try {
-    const body = (await context.request.json()) as Record<string, unknown>;
-    const id = String(body.id || '');
-    if (!id) {
-      return new Response(JSON.stringify({ error: 'Missing report id' }), {
+    const existing = await db
+      .prepare('SELECT * FROM reports WHERE id = ? AND is_deleted = 0')
+      .bind(id)
+      .first<ReportRow>();
+
+    if (!existing) {
+      return new Response(JSON.stringify({ error: 'Report not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Fail-Closed Edit Authorization
+    if (!isAdmin) {
+      if (!clientToken) {
+        return new Response(JSON.stringify({ error: 'Unauthorized: missing edit token' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      if (!existing.edit_token_hash) {
+        return new Response(JSON.stringify({ error: 'Forbidden: record requires admin authorization' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      const clientHash = await sha256(clientToken);
+      if (clientHash !== existing.edit_token_hash) {
+        return new Response(JSON.stringify({ error: 'Forbidden: invalid edit token' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    }
+
+    // Shared Schema Validation on PUT (fixes P1 update validation gap)
+    const validation = validateReportFields(body, existing);
+    if (!validation.valid) {
+      return new Response(JSON.stringify({ error: validation.error }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' }
       });
     }
+    const f = validation.data;
+    const updatedAt = new Date().toISOString();
 
-    // Authorization: X-Edit-Token or X-Admin-Key
-    const clientToken = context.request.headers.get('X-Edit-Token') || (body.editToken as string);
-    const adminKey = context.request.headers.get('X-Admin-Key');
-    const isAdmin = Boolean(context.env.ADMIN_API_KEY && adminKey === context.env.ADMIN_API_KEY);
+    await db
+      .prepare(`
+        UPDATE reports SET
+          lat = ?, lng = ?, time_of_day = ?, observed_date = ?, observed_time = ?,
+          intensity = ?, smell_type = ?, wind_condition = ?, wind_direction = ?,
+          notes = ?, reported_by = ?, updated_at = ?
+        WHERE id = ?
+      `)
+      .bind(
+        f.lat,
+        f.lng,
+        f.timeOfDay,
+        f.observedDate,
+        f.observedTime,
+        f.intensity,
+        f.smellType,
+        f.windCondition,
+        f.windDirection,
+        f.notes,
+        f.reportedBy,
+        updatedAt,
+        id
+      )
+      .run();
 
-    if (db) {
-      await ensureD1Table(db);
-      const existing = await db
-        .prepare('SELECT * FROM reports WHERE id = ? AND is_deleted = 0')
-        .bind(id)
-        .first<ReportRow>();
+    const updatedRow = await db
+      .prepare('SELECT * FROM reports WHERE id = ?')
+      .bind(id)
+      .first<ReportRow>();
 
-      if (!existing) {
-        return new Response(JSON.stringify({ error: 'Report not found' }), {
-          status: 404,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Check edit authorization
-      if (!isAdmin) {
-        if (!clientToken) {
-          return new Response(JSON.stringify({ error: 'Unauthorized: missing edit token' }), {
-            status: 403,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-        const clientHash = await sha256(clientToken);
-        if (existing.edit_token_hash && clientHash !== existing.edit_token_hash) {
-          return new Response(JSON.stringify({ error: 'Forbidden: invalid edit token' }), {
-            status: 403,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-      }
-
-      const lat = body.lat !== undefined ? Number(body.lat) : existing.lat;
-      const lng = body.lng !== undefined ? Number(body.lng) : existing.lng;
-      const timeOfDay = body.timeOfDay ? String(body.timeOfDay) : existing.time_of_day;
-      const observedDate = body.observedDate ? String(body.observedDate) : existing.observed_date;
-      const observedTime = body.observedTime ? String(body.observedTime) : existing.observed_time;
-      const intensity = body.intensity ? String(body.intensity) : existing.intensity;
-      const smellType = body.smellType ? String(body.smellType) : existing.smell_type;
-      const windCondition = body.windCondition ? String(body.windCondition) : existing.wind_condition;
-      const windDirection = body.windDirection !== undefined ? (body.windDirection ? String(body.windDirection).substring(0, 60) : null) : existing.wind_direction;
-      const notes = body.notes !== undefined ? String(body.notes).substring(0, 500) : existing.notes;
-      const reportedBy = body.reportedBy !== undefined ? String(body.reportedBy).substring(0, 80) : existing.reported_by;
-      const updatedAt = new Date().toISOString();
-
-      await db
-        .prepare(`
-          UPDATE reports SET
-            lat = ?, lng = ?, time_of_day = ?, observed_date = ?, observed_time = ?,
-            intensity = ?, smell_type = ?, wind_condition = ?, wind_direction = ?,
-            notes = ?, reported_by = ?, updated_at = ?
-          WHERE id = ?
-        `)
-        .bind(
-          lat, lng, timeOfDay, observedDate, observedTime,
-          intensity, smellType, windCondition, windDirection,
-          notes, reportedBy, updatedAt, id
-        )
-        .run();
-
-      const updatedRow = await db
-        .prepare('SELECT * FROM reports WHERE id = ?')
-        .bind(id)
-        .first<ReportRow>();
-
-      return new Response(JSON.stringify(formatClientReport(updatedRow!)), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // KV fallback
-    if (kv) {
-      const raw = await kv.get('all_gas_reports');
-      if (raw) {
-        const reports = JSON.parse(raw);
-        const index = reports.findIndex((r: { id: string }) => r.id === id);
-        if (index !== -1) {
-          reports[index] = { ...reports[index], ...body, updatedAt: new Date().toISOString() };
-          await kv.put('all_gas_reports', JSON.stringify(reports));
-          return new Response(JSON.stringify(reports[index]), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-      }
-    }
-
-    return new Response(JSON.stringify(body), {
+    return new Response(JSON.stringify(formatClientReport(updatedRow!)), {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: msg }), {
+    return new Response(JSON.stringify({ error: 'Failed to update report', details: msg }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -418,11 +444,17 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
 };
 
 // ----------------------------------------------------
-// DELETE /api/reports?id=...
+// DELETE /api/reports?id=... (Soft Delete)
 // ----------------------------------------------------
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const db = context.env.DB;
-  const kv = context.env.GAS_REPORTS_KV;
+  if (!db) {
+    return new Response(JSON.stringify({ error: 'Storage not configured: missing D1 DB binding' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+
   const url = new URL(context.request.url);
   const id = url.searchParams.get('id');
 
@@ -437,8 +469,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const adminKey = context.request.headers.get('X-Admin-Key');
   const isAdmin = Boolean(context.env.ADMIN_API_KEY && adminKey === context.env.ADMIN_API_KEY);
 
-  if (db) {
-    await ensureD1Table(db);
+  try {
     const existing = await db
       .prepare('SELECT * FROM reports WHERE id = ? AND is_deleted = 0')
       .bind(id)
@@ -451,7 +482,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
       });
     }
 
-    // Verify token or admin authorization
+    // Fail-Closed Delete Authorization
     if (!isAdmin) {
       if (!clientToken) {
         return new Response(JSON.stringify({ error: 'Unauthorized: missing edit token' }), {
@@ -459,8 +490,14 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
           headers: { 'Content-Type': 'application/json' }
         });
       }
+      if (!existing.edit_token_hash) {
+        return new Response(JSON.stringify({ error: 'Forbidden: record requires admin authorization' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
       const clientHash = await sha256(clientToken);
-      if (existing.edit_token_hash && clientHash !== existing.edit_token_hash) {
+      if (clientHash !== existing.edit_token_hash) {
         return new Response(JSON.stringify({ error: 'Forbidden: invalid edit token' }), {
           status: 403,
           headers: { 'Content-Type': 'application/json' }
@@ -468,7 +505,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
       }
     }
 
-    // Soft delete for audit trail
+    // Soft delete preserves audit record for Atmos Energy / HOA
     await db
       .prepare('UPDATE reports SET is_deleted = 1, updated_at = ? WHERE id = ?')
       .bind(new Date().toISOString(), id)
@@ -478,20 +515,11 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
       status: 200,
       headers: { 'Content-Type': 'application/json' }
     });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ error: 'Failed to delete report', details: msg }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
-
-  // KV fallback
-  if (kv) {
-    const raw = await kv.get('all_gas_reports');
-    if (raw) {
-      const reports = JSON.parse(raw);
-      const filtered = reports.filter((r: { id: string }) => r.id !== id);
-      await kv.put('all_gas_reports', JSON.stringify(filtered));
-    }
-  }
-
-  return new Response(JSON.stringify({ success: true, id }), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
-  });
 };

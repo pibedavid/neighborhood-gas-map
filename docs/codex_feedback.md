@@ -120,3 +120,58 @@ Recommendation: derive the bucket from a `time` input when a specific time is kn
 - The map-first flow, compact time-color legend, satellite toggle, and mobile bottom actions are well aligned with use in the neighborhood.
 - The immediate undo and move-pin flow is a good response to the most likely mobile reporting error.
 - The export summary and CSV provide a strong bridge from community observations to a practical HOA/utility handoff once data integrity is protected.
+
+## Second pass — October 20, 2026
+
+**Scope:** Re-review of the hardening work through current `main` (including commits `c12e185`, `1e4a8ac`, and `6d95b38`), plus a fresh `npm run build`.
+
+**Second-pass verdict:** The core release blockers from the first review have been materially addressed in the D1-backed production path. In particular, arbitrary shared-record edit/delete and stored popup XSS are no longer present in that path. The fresh production build again passes with zero TypeScript/Vite errors. I would classify the app as suitable for a small, known-neighbor pilot after the remaining P1 items below are resolved or explicitly accepted; I would not yet describe the write endpoint as fully hardened for broad public distribution.
+
+### Verified resolutions from the first pass
+
+- **P0 ownership bypass — resolved in the D1 path.** Creates generate a UUID edit token, the server stores only its SHA-256 hash, and D1-backed PUT/DELETE require the matching `X-Edit-Token` (or an admin key). Missing records now return `404`; invalid/missing tokens return `403`. The report-list delete button is also now shown only for reports whose local device holds a token.
+- **P0 stored XSS — resolved.** `Map.tsx` no longer interpolates report text into popup `innerHTML`. The popup is built with DOM nodes and `textContent`, including notes, reporter, wind direction, date, and time.
+- **P1 concurrent whole-list persistence — resolved in the intended production path.** Each report is now a D1 row rather than an element in a read/modify/write KV array. Soft deletes preserve an audit record. `schema.sql` includes useful active/date indexes.
+- **P1 false success for a missing D1 report — resolved.** D1 PUT and DELETE find the active record first and return a real `404` when absent. The client treats non-2xx responses as failures rather than silently presenting them as saved.
+- **P1 CSV formula injection — resolved.** The exporter prefixes cells beginning with spreadsheet formula triggers and now generates a UTF-8-BOM Blob download rather than a data URI.
+- **Fixed-coordinate report entry — resolved.** The primary report action enters an explicit “Tap map where you smelled it” placement mode and offers opt-in browser GPS, instead of silently assigning a fixed neighborhood coordinate.
+- **Operational improvements verified:** seed data is removed, local calendar date generation avoids the prior UTC rollover, popup-dismiss clicks are guarded, and draggable marker handling no longer rebuilds the layer mid-drag.
+
+### Remaining findings
+
+#### P1 — Update requests bypass the validation added to POST
+
+POST now constrains coordinates and truncates some strings, but the D1 PUT handler accepts replacement `lat`, `lng`, `timeOfDay`, `intensity`, `smellType`, `windCondition`, `observedDate`, and `observedTime` without validating ranges, allowed values, date format, or coordinate finiteness. A legitimate report owner—or someone with a stolen edit token—can update a record to invalid enums, impossible coordinates, or malformed dates. The POST coordinate validation is global Earth bounds only, so neither method confines pins to the intended neighborhood.
+
+Recommendation: extract one shared server-side parser/validator and use it for both create and update. Reject non-finite coordinates and enforce an intentionally chosen Flower Mound/neighborhood bounding box; validate all enums and a strict `YYYY-MM-DD` date; constrain time and every text field. Do not rely on TypeScript client types as a boundary.
+
+#### P1 — Turnstile is optional even when its secret is configured, and no widget supplies a token
+
+The server verifies Turnstile only when **both** `TURNSTILE_SECRET_KEY` and `body.turnstileToken` are present. If the secret is bound but an attacker simply omits `turnstileToken`, the request proceeds. The reviewed client has no Turnstile widget/integration that obtains and passes a real token (the optional API parameter exists but `App.tsx` does not provide one).
+
+Recommendation: once Turnstile is enabled, require a nonempty token and fail closed on missing, invalid, or verification-error responses. Add the client widget using the matching public site key, pass the token to `submitReport`, reset it after each attempt, and add Cloudflare rate limiting as a separate control. Until then, describe the app as having no effective bot gate rather than relying on this code path.
+
+#### P1 — KV fallback retains the old insecure semantics
+
+Production is documented as D1-bound, but the retained KV fallback does not verify edit tokens on PUT/DELETE, permits arbitrary merge fields, uses the old whole-list overwrite pattern, and returns a successful echo on a missing report. If D1 is accidentally unbound or a future environment binds only KV, the original integrity vulnerabilities return.
+
+Recommendation: either remove the fallback and fail closed when D1 is unavailable, or bring its authorization, validation, conflict behavior, and retention semantics up to parity. A storage configuration must not lower the security model.
+
+#### P2 — The live D1 deployment claim was not independently exercised in this review
+
+`STATUS.md` records a successful live D1 read/write/delete probe, which is encouraging. The external inspection channel available for this review still could not reach the Pages URL/API, so I could not independently confirm the active binding or exercise the deployed endpoint. This is a verification limitation, not evidence that the claim is false.
+
+Recommendation: retain an operator-run, non-production health-check procedure that proves: D1 is bound; a create returns an edit token; unauthenticated update/delete return `403`; authorized update/delete succeed; and a malformed/spam request is rejected. Do not run that probe against the public production evidence log unless its test data is reliably isolated or purged through the audit process.
+
+#### P2 — Original privacy, retention, accessibility, and filter concerns remain mostly open
+
+The changes correctly remove fake seeds and improve placement safety, but the app still exposes exact coordinates and optional identity/free-text data to every visitor and offers an all-record export. There is no visible consent/data-retention policy in the reviewed UI. The time-of-day picker remains a clickable `div` rather than a keyboard-operable radio/button control; dialogs still lack dialog semantics, focus trapping, Escape handling, and labelled close buttons. `FilterState` still includes date/intensity state while the visible header only exposes time-of-day, and filtering still does not apply a date.
+
+Recommendation: make an explicit product decision on public precision, retention, and export audience before broad sharing; then add concise submission disclosure. Follow with the focused accessibility/filter cleanup described in the first-pass review.
+
+### Second-pass test record
+
+- `npm run build`: **PASS** — clean TypeScript compilation and Vite production build; generated JavaScript is 421.86 kB / 126.77 kB gzip.
+- Source review of D1 create/read/update/delete, client edit-token transport, popup rendering, CSV export, explicit pin placement, schema, and Git history: **PASS with the exceptions recorded above**.
+- Automated unit/integration/end-to-end tests: **not present**.
+- Independent live Pages/D1 request test: **not completed** because the available external inspection channel could not access the deployment URL.
