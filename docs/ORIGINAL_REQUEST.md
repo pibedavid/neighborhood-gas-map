@@ -98,9 +98,13 @@ Dave's goal was to provide an interactive map where neighbors could drop pins in
    - **Deployed as a standalone Cloudflare Pages site** (e.g. `*.pages.dev`).
    - **Explicit decision NOT to publish under personal domain `galindo.co`**, keeping the neighborhood civic tool separate from personal household infrastructure.
 5. **Backend & Persistence:**
-   - Cloudflare Pages Function at `functions/api/reports.ts`.
+   - Cloudflare Pages Function at `functions/api/reports.ts` with `GET`, `POST`, `PUT`, and `DELETE`.
    - Production persistence via Cloudflare KV (`GAS_REPORTS_KV`).
    - Automatic graceful client fallback to `localStorage` in dev and preview environments.
+6. **Fatfinger & Misclick Safeguards (Undo, Move & Edit):**
+   - **Immediate Undo / Move Toast:** Appears automatically for 30 seconds after dropping a pin with 1-tap `[Undo]` and `[Move Pin]`.
+   - **Interactive Repositioning Mode:** Users can drag their pin or tap a new location on the map, then confirm with `[Save Position]` or `[Cancel]`.
+   - **Device Pin Ownership & Popup Controls:** The submitting device tracks its owned pins in localStorage. Clicking their own pin reveals `[Move Pin]`, `[Edit Details]`, and `[Delete My Pin]` buttons, allowing neighbors to correct accidental mistakes at any time without needing account authentication.
 
 ---
 

@@ -79,6 +79,52 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 };
 
+export const onRequestPut: PagesFunction<Env> = async (context) => {
+  const kv = context.env.GAS_REPORTS_KV;
+
+  try {
+    const body = await context.request.json() as Record<string, unknown>;
+    const id = body.id as string;
+    if (!id) {
+      return new Response(JSON.stringify({ error: 'Missing report id' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    if (kv) {
+      const raw = await kv.get(KV_LIST_KEY);
+      if (raw) {
+        const reports = JSON.parse(raw);
+        const index = reports.findIndex((r: { id: string }) => r.id === id);
+        if (index !== -1) {
+          reports[index] = {
+            ...reports[index],
+            ...body,
+            updatedAt: new Date().toISOString()
+          };
+          await kv.put(KV_LIST_KEY, JSON.stringify(reports));
+          return new Response(JSON.stringify(reports[index]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+    }
+
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+};
+
 export const onRequestDelete: PagesFunction<Env> = async (context) => {
   const kv = context.env.GAS_REPORTS_KV;
   const url = new URL(context.request.url);

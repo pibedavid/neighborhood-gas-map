@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, MapPin, AlertCircle } from 'lucide-react';
 import {
+  GasReport,
   NewReportInput,
   TimeOfDay,
   Intensity,
@@ -12,16 +13,26 @@ import {
 
 interface ReportModalProps {
   initialLocation: { lat: number; lng: number } | null;
+  editingReport?: GasReport | null;
   onClose: () => void;
   onSubmit: (input: NewReportInput) => Promise<void>;
+  onUpdate?: (id: string, updates: Partial<GasReport>) => Promise<void>;
 }
 
-export const ReportModal: React.FC<ReportModalProps> = ({ initialLocation, onClose, onSubmit }) => {
-  const defaultCoords = initialLocation || { lat: 33.03505, lng: -97.04638 };
+export const ReportModal: React.FC<ReportModalProps> = ({
+  initialLocation,
+  editingReport,
+  onClose,
+  onSubmit,
+  onUpdate
+}) => {
+  const defaultCoords = editingReport
+    ? { lat: editingReport.lat, lng: editingReport.lng }
+    : initialLocation || { lat: 33.03505, lng: -97.04638 };
   const lat = defaultCoords.lat;
   const lng = defaultCoords.lng;
 
-  // Auto-detect current time of day
+  // Auto-detect current time of day if new report
   const currentHour = new Date().getHours();
   const defaultTod: TimeOfDay =
     currentHour >= 6 && currentHour < 12
@@ -32,19 +43,32 @@ export const ReportModal: React.FC<ReportModalProps> = ({ initialLocation, onClo
       ? 'evening'
       : 'night';
 
-  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>(defaultTod);
+  const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>(
+    editingReport?.timeOfDay || defaultTod
+  );
   const [observedDate, setObservedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
+    editingReport?.observedDate || new Date().toISOString().split('T')[0]
   );
   const [observedTime, setObservedTime] = useState<string>(
-    new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    editingReport?.observedTime ||
+      new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   );
-  const [intensity, setIntensity] = useState<Intensity>('moderate');
-  const [smellType, setSmellType] = useState<SmellType>('rotten-egg');
-  const [windCondition, setWindCondition] = useState<WindCondition>('light-breeze');
-  const [windDirection, setWindDirection] = useState<string>('');
-  const [notes, setNotes] = useState<string>('');
-  const [reportedBy, setReportedBy] = useState<string>('');
+  const [intensity, setIntensity] = useState<Intensity>(
+    editingReport?.intensity || 'moderate'
+  );
+  const [smellType, setSmellType] = useState<SmellType>(
+    editingReport?.smellType || 'rotten-egg'
+  );
+  const [windCondition, setWindCondition] = useState<WindCondition>(
+    editingReport?.windCondition || 'light-breeze'
+  );
+  const [windDirection, setWindDirection] = useState<string>(
+    editingReport?.windDirection || ''
+  );
+  const [notes, setNotes] = useState<string>(editingReport?.notes || '');
+  const [reportedBy, setReportedBy] = useState<string>(
+    editingReport?.reportedBy || ''
+  );
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,19 +78,33 @@ export const ReportModal: React.FC<ReportModalProps> = ({ initialLocation, onClo
     setSubmitting(true);
 
     try {
-      await onSubmit({
-        lat,
-        lng,
-        timeOfDay,
-        observedDate,
-        observedTime,
-        intensity,
-        smellType,
-        windCondition,
-        windDirection: windDirection.trim() || undefined,
-        notes: notes.trim(),
-        reportedBy: reportedBy.trim() || undefined
-      });
+      if (editingReport && onUpdate) {
+        await onUpdate(editingReport.id, {
+          timeOfDay,
+          observedDate,
+          observedTime,
+          intensity,
+          smellType,
+          windCondition,
+          windDirection: windDirection.trim() || undefined,
+          notes: notes.trim(),
+          reportedBy: reportedBy.trim() || undefined
+        });
+      } else {
+        await onSubmit({
+          lat,
+          lng,
+          timeOfDay,
+          observedDate,
+          observedTime,
+          intensity,
+          smellType,
+          windCondition,
+          windDirection: windDirection.trim() || undefined,
+          notes: notes.trim(),
+          reportedBy: reportedBy.trim() || undefined
+        });
+      }
       onClose();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to save report';
@@ -106,7 +144,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ initialLocation, onClo
             </div>
             <div>
               <h2 style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>
-                Report Gas Odor Sighting
+                {editingReport ? 'Edit My Gas Sighting' : 'Report Gas Odor Sighting'}
               </h2>
               <p style={{ fontSize: '11px', color: '#64748b' }}>
                 Pin location: {lat.toFixed(5)}, {lng.toFixed(5)}
@@ -346,7 +384,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({ initialLocation, onClo
               className="btn-primary"
               style={{ flex: 2, justifyContent: 'center' }}
             >
-              {submitting ? 'Saving...' : 'Pin This Sighting'}
+              {submitting ? 'Saving...' : editingReport ? 'Update Sighting' : 'Pin This Sighting'}
             </button>
           </div>
         </form>

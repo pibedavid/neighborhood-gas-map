@@ -74,3 +74,7 @@
    - Centered at `[33.0352, -97.0482]` with `zoom: 16.6` (`zoomSnap: 0.1`) so west-side streets (Maple Grove, Lofty Pines, Redwood Crest) and eastern pond/bridge/Golden Aspen Dr fit cleanly on both mobile and laptop screens.
 5. **Actionable Deliverables:**
    - Built-in "Export HOA & Atmos Energy Dossier" button: generates clean printable summary and CSV download with GPS coordinates, timestamps, and notes.
+6. **Fatfinger & Misclick Handling (Undo, Move, Edit):**
+   - Immediate 30-second floating toast on submission allows 1-tap `[Undo]` or `[Move Pin]`.
+   - Reposition mode enables dragging the pin or tapping a new map location, saving changes via `PUT /api/reports`.
+   - Submitting browser tracks its pin IDs in localStorage, providing `[Move Pin]`, `[Edit Details]`, and `[Delete My Pin]` buttons inside its own marker popups.

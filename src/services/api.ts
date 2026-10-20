@@ -88,6 +88,41 @@ export async function fetchReports(): Promise<GasReport[]> {
   return getLocalReports();
 }
 
+const MY_REPORTS_KEY = 'neighborhood_my_report_ids_v1';
+
+export function getMyReportIds(): string[] {
+  try {
+    const raw = localStorage.getItem(MY_REPORTS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveMyReportId(id: string): void {
+  try {
+    const current = getMyReportIds();
+    if (!current.includes(id)) {
+      localStorage.setItem(MY_REPORTS_KEY, JSON.stringify([id, ...current]));
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function removeMyReportId(id: string): void {
+  try {
+    const current = getMyReportIds();
+    localStorage.setItem(MY_REPORTS_KEY, JSON.stringify(current.filter((x) => x !== id)));
+  } catch {
+    // ignore
+  }
+}
+
+export function isMyReport(id: string): boolean {
+  return getMyReportIds().includes(id);
+}
+
 export async function submitReport(input: NewReportInput): Promise<GasReport> {
   const newReport: GasReport = {
     ...input,
@@ -95,6 +130,8 @@ export async function submitReport(input: NewReportInput): Promise<GasReport> {
     reportedBy: input.reportedBy?.trim() || 'Anonymous Neighbor',
     createdAt: new Date().toISOString()
   };
+
+  saveMyReportId(newReport.id);
 
   // Attempt to submit to Cloudflare Pages Function
   try {
@@ -120,7 +157,43 @@ export async function submitReport(input: NewReportInput): Promise<GasReport> {
   return newReport;
 }
 
+export async function updateReport(
+  id: string,
+  updates: Partial<GasReport>
+): Promise<GasReport> {
+  const current = getLocalReports();
+  const existing = current.find((r) => r.id === id);
+  const updated: GasReport = {
+    ...(existing || (updates as GasReport)),
+    ...updates,
+    id
+  };
+
+  // Attempt Cloudflare Pages Function PUT
+  try {
+    const res = await fetch('/api/reports', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updated)
+    });
+    if (res.ok) {
+      const saved = await res.json();
+      const updatedList = current.map((r) => (r.id === id ? saved : r));
+      saveLocalReports(updatedList);
+      return saved;
+    }
+  } catch {
+    // Fall back to local storage
+  }
+
+  const updatedList = current.map((r) => (r.id === id ? updated : r));
+  saveLocalReports(updatedList);
+  return updated;
+}
+
 export async function deleteReport(id: string): Promise<boolean> {
+  removeMyReportId(id);
+
   try {
     await fetch(`/api/reports?id=${encodeURIComponent(id)}`, {
       method: 'DELETE'
