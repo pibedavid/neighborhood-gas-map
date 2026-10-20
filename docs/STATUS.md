@@ -1,26 +1,33 @@
 # STATUS.md — Living State of Neighborhood Gas Map
 **Last Updated:** October 20, 2026  
-**Current Phase:** Phase 1 — Project Genesis & Initial Scaffolding
+**Current Phase:** Phase 2 — Peer Review Resolution & Production Hardening
 
 ---
 
 ## What Just Happened
-- Initialized fresh git repository at [`C:\Dev\neighborhood-gas-map`](file:///c:/Dev/neighborhood-gas-map) on branch `main`.
-- Established operational baseline in [`AGENTS.md`](file:///c:/Dev/neighborhood-gas-map/AGENTS.md) adhering to household rules and `worldcup2` multi-agent standards.
-- Grounded exact neighborhood coordinates for Flower Mound, TX (Golden Aspen Dr, Rosewood Trail, and the neighborhood pond: `[33.03505, -97.04638]`).
-- Architected decision framework in [`docs/decisions/settled.md`](file:///c:/Dev/neighborhood-gas-map/docs/decisions/settled.md) and [`docs/decisions/stillopen.md`](file:///c:/Dev/neighborhood-gas-map/docs/decisions/stillopen.md).
-- Built and verified full React 19 + TypeScript + Vite web app with Leaflet interactive mapping.
-- Implemented time-of-day color-coded pins (🌅 Morning, ☀️ Afternoon, 🌆 Evening, 🌙 Night), odor intensity badges, and animated halos for strong reports.
-- Added dual-mode tile toggle between OpenStreetMap street names and high-resolution Esri satellite aerial photography.
-- Added HOA & Atmos Energy dossier export modal with CSV download and formatted text summary for emails and Facebook.
-- Added Cloudflare Pages Function `/api/reports` with KV support and resilient localStorage fallback.
-- Verified production build clean (`npm run build` completed with 0 errors).
-- Committed and pushed to GitHub remote: [`https://github.com/pibedavid/neighborhood-gas-map`](https://github.com/pibedavid/neighborhood-gas-map).
-- Authored [`docs/ORIGINAL_REQUEST.md`](file:///c:/Dev/neighborhood-gas-map/docs/ORIGINAL_REQUEST.md) compiling full genesis context, Facebook post text, design decisions, and review prompts for Claude Code (CC) and Codex.
+- Ingested comprehensive peer reviews from Claude Code ([`docs/CC_feedback.md`](file:///c:/Dev/neighborhood-gas-map/docs/CC_feedback.md)) and Codex ([`docs/codex_feedback.md`](file:///c:/Dev/neighborhood-gas-map/docs/codex_feedback.md)).
+- Settled 4 architectural decisions with Dave:
+  1. Storage: Option A — Cloudflare D1 (Serverless SQLite) table `reports` with KV fallback.
+  2. Pin Placement: Option A — Explicit Placement Mode ("Tap map where you smelled it" + "📍 Use My GPS" button, never defaulting to Dave's house coordinate).
+  3. Ownership & Moderation: Option A — Zero-friction `editToken` (UUID stored in localStorage, verified via SHA-256 hash on server for `PUT`/`DELETE`, soft-delete `is_deleted = 1`).
+  4. Spam & Bot Protection: Option B — Smart bot detection (Turnstile invisible / managed) without hard device GPS geofencing, allowing neighbors to report while at work.
+- Hardened security and fixed reported vulnerabilities:
+  - **Stored XSS (P0-2):** Eliminated `innerHTML` in marker popups; popups constructed using safe DOM nodes and `textContent`.
+  - **Ownership Bypass (P0-3):** Implemented server-side token validation; restricted delete in "View All" modal to user's own reports only.
+  - **CSV Formula Injection & Truncation (P1-7):** Used `\uFEFF` UTF-8 BOM + `Blob` object URL, escaping leading formula triggers (`=`, `+`, `-`, `@`).
+  - **Date Bug (P1-3):** Fixed UTC rollover bug where evening sightings after 7:00 PM CDT were logged as tomorrow; now uses `getLocalTodayDate()`.
+  - **Map Click vs Popup Dismissal (P1-6):** Guard added to prevent map click from opening new report modal when dismissing a popup.
+  - **Marker Drag Fix (P1-5):** Prevented layer rebuild during drag so marker doesn't get destroyed mid-drag.
+- Wiped all fake mock seed pins so Dave can inaugurate the real dataset.
+- Verified build: `npm run build` succeeds cleanly with 0 TypeScript/Vite errors.
 
 ---
 
-## Active Phase: Peer Review & Cloudflare Pages Live Link
+## Active Phase: Git Commit & Cloudflare D1 Binding
 - **GitHub Repository:** [`https://github.com/pibedavid/neighborhood-gas-map`](https://github.com/pibedavid/neighborhood-gas-map) (branch `main`).
-- **Live Cloudflare Pages URL:** [`https://neighborhood-gas-map.pages.dev`](https://neighborhood-gas-map.pages.dev) (Live & Deployed).
-- **Peer Review Ready:** Claude Code and Codex can review [`docs/ORIGINAL_REQUEST.md`](file:///c:/Dev/neighborhood-gas-map/docs/ORIGINAL_REQUEST.md) and [`docs/decisions/settled.md`](file:///c:/Dev/neighborhood-gas-map/docs/decisions/settled.md).
+- **Live Cloudflare Pages URL:** [`https://neighborhood-gas-map.pages.dev`](https://neighborhood-gas-map.pages.dev).
+- **Next Operational Step for Dave:**
+  - In Cloudflare Dashboard: **Workers & Pages** → **`neighborhood-gas-map`** → **Settings** → **Bindings** → Add **D1 database** binding:
+    - Variable name: `DB`
+    - D1 Database: `neighborhood-gas-db`
+

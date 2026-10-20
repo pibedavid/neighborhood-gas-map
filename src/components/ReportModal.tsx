@@ -10,6 +10,7 @@ import {
   TIME_OF_DAY_CONFIG,
   INTENSITY_CONFIG
 } from '../types';
+import { getLocalTodayDate } from '../services/api';
 
 interface ReportModalProps {
   initialLocation: { lat: number; lng: number } | null;
@@ -47,12 +48,13 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     editingReport?.timeOfDay || defaultTod
   );
   const [observedDate, setObservedDate] = useState<string>(
-    editingReport?.observedDate || new Date().toISOString().split('T')[0]
+    editingReport?.observedDate || getLocalTodayDate()
   );
   const [observedTime, setObservedTime] = useState<string>(
     editingReport?.observedTime ||
       new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   );
+
   const [intensity, setIntensity] = useState<Intensity>(
     editingReport?.intensity || 'moderate'
   );

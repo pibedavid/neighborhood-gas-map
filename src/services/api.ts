@@ -1,62 +1,69 @@
 import { GasReport, NewReportInput } from '../types';
 
-const STORAGE_KEY = 'neighborhood_gas_reports_v1';
+const STORAGE_KEY = 'neighborhood_gas_reports_v2';
+const TOKENS_KEY = 'neighborhood_report_tokens_v1';
 
-// Seed initial reports based on the user's Facebook post to jumpstart the map
-const SEED_REPORTS: GasReport[] = [
-  {
-    id: 'seed-1',
-    lat: 33.03485,
-    lng: -97.04615,
-    timeOfDay: 'afternoon',
-    observedDate: '2026-10-18',
-    observedTime: '03:15 PM',
-    intensity: 'moderate',
-    smellType: 'rotten-egg',
-    windCondition: 'light-breeze',
-    windDirection: 'South',
-    notes: 'Outside corner house on Golden Aspen Dr. Atmos tech inspected meter/perimeter later and found no leak at meter.',
-    reportedBy: 'Dave (Golden Aspen Dr)',
-    createdAt: '2026-10-18T15:30:00.000Z'
-  },
-  {
-    id: 'seed-2',
-    lat: 33.03532,
-    lng: -97.04662,
-    timeOfDay: 'evening',
-    observedDate: '2026-10-19',
-    observedTime: '08:45 PM',
-    intensity: 'moderate',
-    smellType: 'rotten-egg',
-    windCondition: 'calm',
-    notes: 'Distinct whiff coming across the wooden bridge over the pond / spillway path.',
-    reportedBy: 'Dave (Golden Aspen Dr)',
-    createdAt: '2026-10-19T21:00:00.000Z'
-  },
-  {
-    id: 'seed-3',
-    lat: 33.03518,
-    lng: -97.04780,
-    timeOfDay: 'morning',
-    observedDate: '2026-10-20',
-    observedTime: '08:10 AM',
-    intensity: 'faint',
-    smellType: 'sulfur',
-    windCondition: 'light-breeze',
-    notes: 'Neighbor walking path between Golden Aspen and far side of the pond noticed it on morning walk.',
-    reportedBy: 'Walking Neighbor',
-    createdAt: '2026-10-20T08:30:00.000Z'
+// Clean slate: no fake mock pins in production
+const SEED_REPORTS: GasReport[] = [];
+
+// Edit Tokens map: { [id: string]: string }
+function getTokensMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(TOKENS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
   }
-];
+}
+
+export function saveEditToken(id: string, token: string): void {
+  try {
+    const map = getTokensMap();
+    map[id] = token;
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
+export function getEditToken(id: string): string | undefined {
+  return getTokensMap()[id];
+}
+
+export function removeEditToken(id: string): void {
+  try {
+    const map = getTokensMap();
+    delete map[id];
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
+export function getMyReportIds(): string[] {
+  return Object.keys(getTokensMap());
+}
+
+export function isMyReport(id: string): boolean {
+  return Boolean(getEditToken(id));
+}
+
+export function getLocalTodayDate(): string {
+  // Returns YYYY-MM-DD in local browser time zone (fixes UTC after-7pm bug)
+  return new Date().toLocaleDateString('en-CA');
+}
 
 function getLocalReports(): GasReport[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_REPORTS));
       return SEED_REPORTS;
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // Filter out any legacy test seed pins
+    return Array.isArray(parsed)
+      ? parsed.filter((r: GasReport) => !r.id.startsWith('seed-'))
+      : SEED_REPORTS;
   } catch {
     return SEED_REPORTS;
   }
@@ -77,131 +84,130 @@ export async function fetchReports(): Promise<GasReport[]> {
     });
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        return data;
+      if (Array.isArray(data)) {
+        // Filter out legacy seeds
+        const cleaned = data.filter((r) => !r.id.startsWith('seed-'));
+        saveLocalReports(cleaned);
+        return cleaned;
       }
     }
   } catch {
-    // Edge API unavailable (e.g. local dev); proceed to localStorage fallback
+    // Edge API unavailable (e.g. offline dev); fall back to local storage
   }
 
   return getLocalReports();
 }
 
-const MY_REPORTS_KEY = 'neighborhood_my_report_ids_v1';
-
-export function getMyReportIds(): string[] {
-  try {
-    const raw = localStorage.getItem(MY_REPORTS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveMyReportId(id: string): void {
-  try {
-    const current = getMyReportIds();
-    if (!current.includes(id)) {
-      localStorage.setItem(MY_REPORTS_KEY, JSON.stringify([id, ...current]));
-    }
-  } catch {
-    // ignore
-  }
-}
-
-export function removeMyReportId(id: string): void {
-  try {
-    const current = getMyReportIds();
-    localStorage.setItem(MY_REPORTS_KEY, JSON.stringify(current.filter((x) => x !== id)));
-  } catch {
-    // ignore
-  }
-}
-
-export function isMyReport(id: string): boolean {
-  return getMyReportIds().includes(id);
-}
-
-export async function submitReport(input: NewReportInput): Promise<GasReport> {
-  const newReport: GasReport = {
+export async function submitReport(
+  input: NewReportInput,
+  turnstileToken?: string
+): Promise<GasReport> {
+  const payload = {
     ...input,
-    id: 'rep-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
-    reportedBy: input.reportedBy?.trim() || 'Anonymous Neighbor',
-    createdAt: new Date().toISOString()
+    turnstileToken
   };
 
-  saveMyReportId(newReport.id);
-
-  // Attempt to submit to Cloudflare Pages Function
   try {
     const res = await fetch('/api/reports', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newReport)
+      body: JSON.stringify(payload)
     });
+
     if (res.ok) {
       const saved = await res.json();
-      // Mirror to local storage for instant responsiveness
+      if (saved.editToken) {
+        saveEditToken(saved.id, saved.editToken);
+      }
       const current = getLocalReports();
       saveLocalReports([saved, ...current]);
       return saved;
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to submit report');
     }
-  } catch {
-    // Fall back to local storage
+  } catch (err) {
+    // If running in pure offline dev with no backend
+    if (import.meta.env.DEV) {
+      const localReport: GasReport = {
+        ...input,
+        id: 'rep-' + Date.now() + '-' + Math.random().toString(36).substring(2, 7),
+        reportedBy: input.reportedBy?.trim() || 'Anonymous Neighbor',
+        createdAt: new Date().toISOString()
+      };
+      saveEditToken(localReport.id, 'dev-token');
+      const current = getLocalReports();
+      saveLocalReports([localReport, ...current]);
+      return localReport;
+    }
+    throw err;
   }
-
-  const current = getLocalReports();
-  const updated = [newReport, ...current];
-  saveLocalReports(updated);
-  return newReport;
 }
 
 export async function updateReport(
   id: string,
   updates: Partial<GasReport>
 ): Promise<GasReport> {
-  const current = getLocalReports();
-  const existing = current.find((r) => r.id === id);
-  const updated: GasReport = {
-    ...(existing || (updates as GasReport)),
-    ...updates,
-    id
-  };
+  const token = getEditToken(id);
 
-  // Attempt Cloudflare Pages Function PUT
   try {
     const res = await fetch('/api/reports', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updated)
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'X-Edit-Token': token } : {})
+      },
+      body: JSON.stringify({ id, ...updates })
     });
+
     if (res.ok) {
       const saved = await res.json();
+      const current = getLocalReports();
       const updatedList = current.map((r) => (r.id === id ? saved : r));
       saveLocalReports(updatedList);
       return saved;
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to update report');
     }
-  } catch {
-    // Fall back to local storage
+  } catch (err) {
+    if (import.meta.env.DEV) {
+      const current = getLocalReports();
+      const existing = current.find((r) => r.id === id);
+      const updated: GasReport = {
+        ...(existing || (updates as GasReport)),
+        ...updates,
+        id
+      };
+      saveLocalReports(current.map((r) => (r.id === id ? updated : r)));
+      return updated;
+    }
+    throw err;
   }
-
-  const updatedList = current.map((r) => (r.id === id ? updated : r));
-  saveLocalReports(updatedList);
-  return updated;
 }
 
 export async function deleteReport(id: string): Promise<boolean> {
-  removeMyReportId(id);
+  const token = getEditToken(id);
 
   try {
-    await fetch(`/api/reports?id=${encodeURIComponent(id)}`, {
-      method: 'DELETE'
+    const res = await fetch(`/api/reports?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: {
+        ...(token ? { 'X-Edit-Token': token } : {})
+      }
     });
-  } catch {
-    // ignore
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.error || 'Failed to delete report');
+    }
+  } catch (err) {
+    if (!import.meta.env.DEV) {
+      throw err;
+    }
   }
 
+  removeEditToken(id);
   const current = getLocalReports();
   const filtered = current.filter((r) => r.id !== id);
   saveLocalReports(filtered);

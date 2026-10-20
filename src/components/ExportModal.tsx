@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Download, Copy, Check, FileSpreadsheet } from 'lucide-react';
 import { GasReport } from '../types';
+import { getLocalTodayDate } from '../services/api';
 
 interface ExportModalProps {
   reports: GasReport[];
@@ -30,10 +31,12 @@ export const ExportModal: React.FC<ExportModalProps> = ({ reports, onClose }) =>
     text += `------------------------------------------------------------\n`;
 
     reports.forEach((r, idx) => {
-      text += `${idx + 1}. [${r.observedDate} @ ${r.observedTime}] (${r.timeOfDay.toUpperCase()} - ${r.intensity.toUpperCase()})\n`;
-      text += `   Coordinates: ${r.lat.toFixed(6)}, ${r.lng.toFixed(6)}\n`;
+      const latStr = typeof r.lat === 'number' ? r.lat.toFixed(6) : 'N/A';
+      const lngStr = typeof r.lng === 'number' ? r.lng.toFixed(6) : 'N/A';
+      text += `${idx + 1}. [${r.observedDate || ''} @ ${r.observedTime || ''}] (${(r.timeOfDay || '').toUpperCase()} - ${(r.intensity || '').toUpperCase()})\n`;
+      text += `   Coordinates: ${latStr}, ${lngStr}\n`;
       if (r.notes) text += `   Location / Notes: "${r.notes}"\n`;
-      text += `   Reported by: ${r.reportedBy} | Wind: ${r.windCondition}\n\n`;
+      text += `   Reported by: ${r.reportedBy || 'Anonymous'} | Wind: ${r.windCondition || 'N/A'}\n\n`;
     });
 
     text += `------------------------------------------------------------\n`;
@@ -49,6 +52,16 @@ export const ExportModal: React.FC<ExportModalProps> = ({ reports, onClose }) =>
     } catch {
       // ignore
     }
+  };
+
+  const sanitizeCsvCell = (val: string | number | undefined | null): string => {
+    if (val === undefined || val === null) return '""';
+    let s = String(val);
+    // Escape formula triggers for spreadsheet apps
+    if (/^[=+\-@\t\r]/.test(s)) {
+      s = "'" + s;
+    }
+    return `"${s.replace(/"/g, '""')}"`;
   };
 
   const handleDownloadCSV = () => {
@@ -68,35 +81,33 @@ export const ExportModal: React.FC<ExportModalProps> = ({ reports, onClose }) =>
     ];
 
     const rows = reports.map((r) => [
-      r.id,
-      r.observedDate,
-      `"${r.observedTime}"`,
-      r.timeOfDay,
-      r.intensity,
-      r.smellType,
-      r.windCondition,
-      r.lat.toFixed(6),
-      r.lng.toFixed(6),
-      `"${(r.notes || '').replace(/"/g, '""')}"`,
-      `"${(r.reportedBy || '').replace(/"/g, '""')}"`,
-      r.createdAt
+      sanitizeCsvCell(r.id),
+      sanitizeCsvCell(r.observedDate),
+      sanitizeCsvCell(r.observedTime),
+      sanitizeCsvCell(r.timeOfDay),
+      sanitizeCsvCell(r.intensity),
+      sanitizeCsvCell(r.smellType),
+      sanitizeCsvCell(r.windCondition),
+      typeof r.lat === 'number' ? r.lat.toFixed(6) : '',
+      typeof r.lng === 'number' ? r.lng.toFixed(6) : '',
+      sanitizeCsvCell(r.notes),
+      sanitizeCsvCell(r.reportedBy),
+      sanitizeCsvCell(r.createdAt)
     ]);
 
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
+    // Use UTF-8 BOM (\uFEFF) and Blob object URL to prevent truncation at '#' or encoding loss
+    const csvContent = '\uFEFF' + [headers.join(','), ...rows.map((e) => e.join(','))].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
-      `neighborhood_gas_reports_${new Date().toISOString().split('T')[0]}.csv`
-    );
+    link.setAttribute('href', url);
+    link.setAttribute('download', `neighborhood_gas_reports_${getLocalTodayDate()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
+
 
   return (
     <div className="modal-overlay" onClick={onClose}>

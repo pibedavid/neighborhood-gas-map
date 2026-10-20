@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, MapPin, Trash2 } from 'lucide-react';
 import { GasReport, TIME_OF_DAY_CONFIG, INTENSITY_CONFIG } from '../types';
+import { isMyReport } from '../services/api';
 
 interface ReportListModalProps {
   reports: GasReport[];
@@ -56,8 +57,9 @@ export const ReportListModal: React.FC<ReportListModalProps> = ({
             </div>
           ) : (
             reports.map((report) => {
-              const todConf = TIME_OF_DAY_CONFIG[report.timeOfDay];
-              const intConf = INTENSITY_CONFIG[report.intensity];
+              const todConf = TIME_OF_DAY_CONFIG[report.timeOfDay] || TIME_OF_DAY_CONFIG.morning;
+              const intConf = INTENSITY_CONFIG[report.intensity] || INTENSITY_CONFIG.moderate;
+              const isMine = isMyReport(report.id);
 
               return (
                 <div
@@ -130,25 +132,35 @@ export const ReportListModal: React.FC<ReportListModalProps> = ({
                         <span>Locate</span>
                       </button>
 
-                      <button
-                        onClick={() => {
-                          if (confirm('Delete this report?')) {
-                            onDeleteReport(report.id);
-                          }
-                        }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: '#94a3b8',
-                          cursor: 'pointer',
-                          padding: '4px'
-                        }}
-                        title="Delete report"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      {isMine && (
+                        <button
+                          onClick={() => {
+                            if (confirm('Delete your report?')) {
+                              onDeleteReport(report.id);
+                            }
+                          }}
+                          style={{
+                            background: '#fef2f2',
+                            border: '1px solid #fecaca',
+                            color: '#b91c1c',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            padding: '4px 8px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            fontSize: '11px',
+                            fontWeight: '600'
+                          }}
+                          title="Delete my pin"
+                        >
+                          <Trash2 size={12} />
+                          <span>Delete</span>
+                        </button>
+                      )}
                     </div>
                   </div>
+
 
                   <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', marginBottom: '4px' }}>
                     {report.observedDate} at {report.observedTime}

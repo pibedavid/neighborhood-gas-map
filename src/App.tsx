@@ -13,7 +13,7 @@ import {
   deleteReport,
   getMyReportIds
 } from './services/api';
-import { Plus, FileSpreadsheet, MapPin, Undo2, Check, X } from 'lucide-react';
+import { Plus, FileSpreadsheet, MapPin, Undo2, Check, X, Navigation } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [reports, setReports] = useState<GasReport[]>([]);
@@ -25,6 +25,10 @@ export const App: React.FC = () => {
   const [editingReport, setEditingReport] = useState<GasReport | null>(null);
   const [exportModalOpen, setExportModalOpen] = useState<boolean>(false);
   const [listModalOpen, setListModalOpen] = useState<boolean>(false);
+
+  // Pin Placement Mode (Option A)
+  const [isPlacingPin, setIsPlacingPin] = useState<boolean>(false);
+  const [isLocatingGps, setIsLocatingGps] = useState<boolean>(false);
 
   // Undo / Move Pin state
   const [recentPinnedId, setRecentPinnedId] = useState<string | null>(null);
@@ -80,9 +84,45 @@ export const App: React.FC = () => {
       setMovingCoords(coords);
       return;
     }
+    setIsPlacingPin(false);
     setClickedLocation(coords);
     setEditingReport(null);
     setReportModalOpen(true);
+  };
+
+  // Start Placement Mode when clicking "+ Report Smell"
+  const handleStartPlacementMode = () => {
+    setMovingReportId(null);
+    setMovingCoords(null);
+    setIsPlacingPin(true);
+  };
+
+  // GPS Geolocation Handler
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your mobile browser. Please tap directly on the map.');
+      return;
+    }
+
+    setIsLocatingGps(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setIsLocatingGps(false);
+        setIsPlacingPin(false);
+        const coords = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude
+        };
+        setClickedLocation(coords);
+        setEditingReport(null);
+        setReportModalOpen(true);
+      },
+      (err) => {
+        setIsLocatingGps(false);
+        alert(`Location access denied or unavailable (${err.message}). Please tap on the map directly.`);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
   };
 
   // Handle New Report Submit
@@ -117,6 +157,7 @@ export const App: React.FC = () => {
   const handleStartMovePin = (id: string) => {
     const report = reports.find((r) => r.id === id);
     if (report) {
+      setIsPlacingPin(false);
       setMovingReportId(id);
       setMovingCoords({ lat: report.lat, lng: report.lng });
       setSelectedReportId(id);
@@ -156,11 +197,7 @@ export const App: React.FC = () => {
         reports={filteredReports}
         filter={filter}
         onFilterChange={setFilter}
-        onOpenReportModal={() => {
-          setClickedLocation(null);
-          setEditingReport(null);
-          setReportModalOpen(true);
-        }}
+        onOpenReportModal={handleStartPlacementMode}
         onOpenListModal={() => setListModalOpen(true)}
         onOpenExportModal={() => setExportModalOpen(true)}
         tileLayer={tileLayer}
@@ -169,6 +206,59 @@ export const App: React.FC = () => {
 
       {/* Main Map Area */}
       <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
+        {/* Placement Mode Banner (Option A UX: Tap map or Use GPS) */}
+        {isPlacingPin && (
+          <div
+            className="glass-panel"
+            style={{
+              position: 'absolute',
+              top: '16px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 700,
+              padding: '10px 18px',
+              borderRadius: '40px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              border: '2px solid #ea580c',
+              background: 'rgba(255, 255, 255, 0.98)',
+              boxShadow: '0 8px 30px rgba(234, 88, 12, 0.35)',
+              animation: 'slideDown 0.2s ease'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <MapPin size={18} color="#ea580c" />
+              <span style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>
+                Tap map where you smelled it
+              </span>
+            </div>
+            <button
+              onClick={handleUseCurrentLocation}
+              disabled={isLocatingGps}
+              className="btn-primary"
+              style={{
+                padding: '6px 14px',
+                fontSize: '12px',
+                borderRadius: '20px',
+                background: 'linear-gradient(135deg, #0284c7 0%, #0369a1 100%)',
+                boxShadow: '0 4px 12px rgba(2, 132, 199, 0.35)'
+              }}
+            >
+              <Navigation size={14} />
+              <span>{isLocatingGps ? 'Locating...' : 'Use My GPS'}</span>
+            </button>
+            <button
+              onClick={() => setIsPlacingPin(false)}
+              className="btn-secondary"
+              style={{ padding: '6px 12px', fontSize: '12px', borderRadius: '20px' }}
+            >
+              <X size={14} />
+              <span>Cancel</span>
+            </button>
+          </div>
+        )}
+
         {/* Active Move Pin Repositioning Banner */}
         {movingReportId && (
           <div
@@ -238,11 +328,7 @@ export const App: React.FC = () => {
         {/* Floating Quick Action Button on Mobile */}
         <div className="floating-bottom-bar glass-panel">
           <button
-            onClick={() => {
-              setClickedLocation(null);
-              setEditingReport(null);
-              setReportModalOpen(true);
-            }}
+            onClick={handleStartPlacementMode}
             className="btn-primary"
             style={{ fontSize: '13px', padding: '9px 18px' }}
           >
@@ -260,6 +346,7 @@ export const App: React.FC = () => {
             <span>HOA Dossier</span>
           </button>
         </div>
+
 
         {/* Immediate Undo / Move Toast Banner after Pinning */}
         {recentPinnedId && !movingReportId && (
