@@ -55,8 +55,8 @@ function formatClientReport(row: ReportRow) {
 
 // Ensure table exists on first run
 async function ensureD1Table(db: D1Database) {
-  try {
-    await db.exec(`
+  await db
+    .prepare(`
       CREATE TABLE IF NOT EXISTS reports (
         id TEXT PRIMARY KEY,
         lat REAL NOT NULL,
@@ -74,12 +74,11 @@ async function ensureD1Table(db: D1Database) {
         is_deleted INTEGER DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT
-      );
-    `);
-  } catch (err) {
-    console.warn('ensureD1Table error:', err);
-  }
+      )
+    `)
+    .run();
 }
+
 
 // ----------------------------------------------------
 // GET /api/reports
