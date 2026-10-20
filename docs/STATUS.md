@@ -21,6 +21,6 @@
 ---
 
 ## Active Phase: Peer Review & Cloudflare Pages Live Link
-- **GitHub Repository:** `https://github.com/pibedavid/neighborhood-gas-map` (branch `main`).
+- **GitHub Repository:** [`https://github.com/pibedavid/neighborhood-gas-map`](https://github.com/pibedavid/neighborhood-gas-map) (branch `main`).
+- **Live Cloudflare Pages URL:** [`https://neighborhood-gas-map.pages.dev`](https://neighborhood-gas-map.pages.dev) (Live & Deployed).
 - **Peer Review Ready:** Claude Code and Codex can review [`docs/ORIGINAL_REQUEST.md`](file:///c:/Dev/neighborhood-gas-map/docs/ORIGINAL_REQUEST.md) and [`docs/decisions/settled.md`](file:///c:/Dev/neighborhood-gas-map/docs/decisions/settled.md).
-- **Cloudflare Pages:** Connect repository in Cloudflare Dashboard (Build: `npm run build`, Output: `dist`) to deploy to `*.pages.dev`.
