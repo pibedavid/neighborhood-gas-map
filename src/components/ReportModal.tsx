@@ -364,10 +364,15 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             <input
               type="text"
               className="form-input"
-              placeholder="e.g. Dave G., Neighbor on Rosewood Trail, etc."
+              placeholder="e.g. Dave G., Pond neighbor, Golden Aspen resident (optional)"
               value={reportedBy}
               onChange={(e) => setReportedBy(e.target.value)}
             />
+          </div>
+
+          {/* Privacy & Community Notice */}
+          <div style={{ fontSize: '11px', color: '#64748b', background: '#f8fafc', padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', marginTop: '8px', lineHeight: '1.4' }}>
+            ℹ️ <strong>Community Record:</strong> Sightings are publicly visible on this map to help compile shared documentation for our HOA Board and Atmos Energy field technicians.
           </div>
 
           {/* Submit Actions */}

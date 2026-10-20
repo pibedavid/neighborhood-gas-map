@@ -175,3 +175,54 @@ Recommendation: make an explicit product decision on public precision, retention
 - Source review of D1 create/read/update/delete, client edit-token transport, popup rendering, CSV export, explicit pin placement, schema, and Git history: **PASS with the exceptions recorded above**.
 - Automated unit/integration/end-to-end tests: **not present**.
 - Independent live Pages/D1 request test: **not completed** because the available external inspection channel could not access the deployment URL.
+
+## Third pass — October 20, 2026
+
+**Scope:** Re-review of the third hardening commit (`726b897`) and its immediate follow-up (`de5541b`), with a fresh production build.
+
+**Third-pass verdict:** The server-side integrity model is now substantially stronger. The second-pass update-validation and insecure-KV-fallback findings are resolved: D1 is required, create/update share a validator, update/delete fail closed for rows without an edit-token hash, and the pin is geographically constrained. The production build passes. The app still has one high-priority public-write protection gap—bot/spam protection is not operational—and one meaningful client error-handling regression described below.
+
+### Verified resolutions from the second pass
+
+- **P1 shared validation/geofence — resolved.** `validateReportFields` is invoked by both POST and D1 PUT. It rejects non-finite coordinates, limits pins to the documented Flower Mound rectangle, validates time/intensity/smell/wind enums, applies text limits, and limits observations to a recent date window.
+- **P1 insecure fallback — resolved.** The KV fallback was removed. Every endpoint returns `503` when the D1 binding is absent, rather than accepting a weaker storage/security model.
+- **P1 fail-open legacy rows — resolved.** D1 records without an edit-token hash now require an admin key for modification or deletion.
+- **Reliability/mobile follow-ups — improved.** The client has explicit failure feedback for submit/update/delete/move actions, the GPS flow prevents remote current-location pins, and the main layout adopts `dvh` sizing.
+- **Build:** `npm run build` passes cleanly. Current emitted JavaScript is 422.59 kB / 126.98 kB gzip.
+
+### Remaining findings
+
+#### P1 — Bot protection/rate limiting is still not operational
+
+The server-side Turnstile branch now correctly fails closed **if** `TURNSTILE_SECRET_KEY` is configured. However, the client still contains no Turnstile widget or token acquisition; `App.tsx` calls `submitReport(input)` without a token. Consequently, binding the secret would make every normal browser submission fail with `403`, while leaving the secret unbound leaves the public POST endpoint without either Turnstile or a rate limit. No WAF/rate-limiting rule can be verified from this repository.
+
+Impact: a script can create arbitrary valid in-bounds reports and, although D1 preserves older records, enough spam can dominate the GET `LIMIT 500` result and hide legitimate pins from the map and exported dossier.
+
+Recommendation: complete the Turnstile integration before enabling its secret: render a managed/invisible widget, pass its current token to `submitReport`, and reset it after submission. Add and document a Cloudflare WAF rate-limit rule for `POST /api/reports` (for example, a small number of submissions per IP per ten minutes). This must be treated as a deployment validation item, not merely code that is ready to be enabled later.
+
+#### P1 — Error handling swallows failures, so forms and move mode still exit as if successful
+
+`handleAddReport` and `handleUpdateReport` catch API failures, show an alert, and then resolve normally. `ReportModal` awaits those callbacks and unconditionally calls `onClose()`, so a failed new submission closes the form and discards the entered details; a failed edit closes its modal too. Likewise, `handleSaveMovedPin` awaits `handleUpdateReport` (which swallowed the failure) and clears move state, despite the report position not being saved. The `try/catch` surrounding `handleSaveMovedPin` cannot catch this swallowed error.
+
+Recommendation: let the App callbacks rethrow after setting user-visible error state, or have them return an explicit success result that callers check. Keep the report modal open with its completed fields on failure; keep move mode active on a failed save. Prefer an in-app toast/error panel to blocking `alert()` so the recovery action remains obvious.
+
+#### P2 — Calendar validation accepts some impossible dates
+
+The validator correctly requires the `YYYY-MM-DD` shape, but `new Date('2026-02-31T00:00:00Z')` normalizes to a date in March instead of failing. Such an input passes the current `isNaN(dateObj.getTime())` check if it is within the 90-day window.
+
+Recommendation: after parsing, compare `dateObj.toISOString().slice(0, 10)` to the submitted date (or use a strict calendar-date parser) before accepting it.
+
+#### P2 — Deployment documentation currently contradicts the committed files
+
+`STATUS.md` states that `wrangler.toml` with the D1 binding was added, but commit `de5541b` explicitly removes it and no `wrangler.toml` is present. Removing a configuration that caused an invalid database-ID build failure may be the correct operational choice, but the status document should say that D1 binding is dashboard-managed and provide a safe reproducible deploy/checklist instead. Do not add a guessed database ID just to restore a config file.
+
+#### P2 — A few earlier non-security items remain
+
+The privacy/retention disclosure, full keyboard/dialog accessibility pass, and date filter UI remain open. Also tighten CSV formula handling by checking the first *non-whitespace* character, since spreadsheet tools may ignore leading spaces before interpreting a formula.
+
+### Third-pass test record
+
+- `npm run build`: **PASS** — clean TypeScript/Vite production build.
+- Static review of D1-only endpoints, shared validation, authorization, client error paths, GPS placement, mobile CSS, and Git changes: **PASS with the remaining findings above**.
+- Automated unit/integration/end-to-end tests: **not present**.
+- Independent live Pages/D1/Turnstile/WAF verification: **not completed** in this review environment.

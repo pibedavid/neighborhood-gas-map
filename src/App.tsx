@@ -111,11 +111,11 @@ export const App: React.FC = () => {
         const lat = pos.coords.latitude;
         const lng = pos.coords.longitude;
 
-        // Proximity sanity check: approx 2.5 miles from Golden Aspen / Pond area
+        // Proximity sanity check: approx 1.0 mile from Golden Aspen / Pond area
         const distDeg = Math.hypot(lat - 33.0352, lng - (-97.0482));
-        if (distDeg > 0.035) {
+        if (distDeg > 0.015) {
           alert(
-            'You seem to be away from the neighborhood right now. Please tap on the map directly where you smelled the gas.'
+            'You seem to be outside the neighborhood right now. Please tap on the map directly where you smelled the gas.'
           );
           return;
         }
@@ -142,8 +142,8 @@ export const App: React.FC = () => {
       setSelectedReportId(saved.id);
       setRecentPinnedId(saved.id); // Trigger undo/move toast!
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Could not submit report';
-      alert(`Submission failed: ${msg}. Please try again.`);
+      // Re-throw so ReportModal catches it, displays inline error, and keeps user's input intact
+      throw err;
     }
   };
 
@@ -154,10 +154,11 @@ export const App: React.FC = () => {
       setReports((prev) => prev.map((r) => (r.id === id ? updated : r)));
       setEditingReport(null);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Could not update report';
-      alert(`Update failed: ${msg}. Please try again.`);
+      // Re-throw so modal/caller retains state on failure
+      throw err;
     }
   };
+
 
   // Handle Delete Report with error handling
   const handleDeleteReport = async (id: string) => {

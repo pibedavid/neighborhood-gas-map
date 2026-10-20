@@ -114,14 +114,19 @@ function validateReportFields(
     return { valid: false, error: 'Invalid observedDate format: must be YYYY-MM-DD' };
   }
   const dateObj = new Date(observedDate + 'T00:00:00Z');
-  if (isNaN(dateObj.getTime())) {
-    return { valid: false, error: 'Invalid calendar date' };
+  if (isNaN(dateObj.getTime()) || dateObj.toISOString().slice(0, 10) !== observedDate) {
+    return { valid: false, error: 'Invalid calendar date (day does not exist in month)' };
   }
-  const now = Date.now();
-  const maxFuture = now + 86400000 * 2; // 2 days leeway for time zones
-  const maxPast = now - 86400000 * 90; // Within past 90 days
-  if (dateObj.getTime() > maxFuture || dateObj.getTime() < maxPast) {
-    return { valid: false, error: 'Date must be within the last 90 days and not in the future' };
+  
+  // Only enforce 90-day window on new submissions or when date is modified (prevents lock on old edits)
+  const isDateChanging = !existing || existing.observed_date !== observedDate;
+  if (isDateChanging) {
+    const now = Date.now();
+    const maxFuture = now + 86400000 * 2; // 2 days leeway for time zones
+    const maxPast = now - 86400000 * 90; // Within past 90 days
+    if (dateObj.getTime() > maxFuture || dateObj.getTime() < maxPast) {
+      return { valid: false, error: 'Date must be within the last 90 days and not in the future' };
+    }
   }
 
   // 4. String Length Limits
@@ -155,6 +160,10 @@ function validateReportFields(
 }
 
 async function parseJsonBody(request: Request): Promise<Record<string, unknown> | null> {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength > 16384) {
+    return null;
+  }
   try {
     return (await request.json()) as Record<string, unknown>;
   } catch {
@@ -188,13 +197,14 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       }
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: 'Database query failed', details: msg }), {
+    console.error('D1 GET /api/reports query error:', err);
+    return new Response(JSON.stringify({ error: 'Database query failed' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
   }
 };
+
 
 // ----------------------------------------------------
 // POST /api/reports (Submit Sighting)
@@ -312,8 +322,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: 'Failed to insert report', details: msg }), {
+    console.error('D1 POST /api/reports query error:', err);
+    return new Response(JSON.stringify({ error: 'Failed to insert report' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -435,8 +445,8 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: 'Failed to update report', details: msg }), {
+    console.error('D1 PUT /api/reports query error:', err);
+    return new Response(JSON.stringify({ error: 'Failed to update report' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });
@@ -516,8 +526,8 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
       headers: { 'Content-Type': 'application/json' }
     });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return new Response(JSON.stringify({ error: 'Failed to delete report', details: msg }), {
+    console.error('D1 DELETE /api/reports query error:', err);
+    return new Response(JSON.stringify({ error: 'Failed to delete report' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
     });

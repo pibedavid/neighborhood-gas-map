@@ -57,8 +57,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({ reports, onClose }) =>
   const sanitizeCsvCell = (val: string | number | undefined | null): string => {
     if (val === undefined || val === null) return '""';
     let s = String(val);
-    // Escape formula triggers for spreadsheet apps
-    if (/^[=+\-@\t\r]/.test(s)) {
+    // Escape formula triggers for spreadsheet apps (including leading whitespace)
+    if (/^\s*[=+\-@\t\r]/.test(s)) {
       s = "'" + s;
     }
     return `"${s.replace(/"/g, '""')}"`;

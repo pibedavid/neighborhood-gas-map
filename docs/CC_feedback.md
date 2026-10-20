@@ -396,3 +396,135 @@ These files are unchanged since the first pass. None of these block a soft launc
 6. Mobile layout pass (`dvh`, compact header, collapsed legend, tap targets, re-enable zoom), then the §4/§5 items.
 
 Items 1–5 are a short session. After that, I'd consider the app fully ready for wide sharing.
+
+---
+---
+
+# 3rd Pass
+
+**Date:** October 20, 2026 (night)
+**Commits reviewed:** `726b897` (hardening pass 3) and `de5541b` (removes `wrangler.toml`), on `main`. The live site serves the same bundle as a local build of `de5541b` (`index-nakH6Fb_.js`).
+**Method:** Same as the 2nd pass. I re-read the rewritten `functions/api/reports.ts`, the `App.tsx` / `index.css` diffs, and the doc changes. I rebuilt locally (clean) and probed the live API with requests that **can't write data** (GETs, and POST/PUT bodies the server rejects). I still haven't sent a valid POST, so the full create→edit→delete cycle on a phone remains Dave's test to run (§2P-3).
+
+## 3P-0. Verdict
+
+**The backend is now in good shape.** The 2nd-pass server items are almost all closed: one shared validator for create and edit, a pin geofence, fail-closed auth, a 503 when storage is missing, the insecure KV fallback removed, and 400 for malformed JSON. **Two things should be fixed before wider sharing**, and both are small:
+
+1. **Bot protection is still off in production** (verified live). See 3P-2.1.
+2. **A regression from the new error handling:** a failed submit or edit now **closes the form and throws away what the neighbor typed**. See 3P-2.2.
+
+Fix those two and I'm comfortable with the link being shared broadly. Everything after §3P-2.2 is polish.
+
+### Live probe results
+
+| Probe (non-mutating) | Result | Verdict |
+|---|---|---|
+| `GET /api/reports` | `200 []`, `Cache-Control: no-cache` | ✅ D1 serving (DB currently empty) |
+| `POST` in-fence, `timeOfDay:"x"`, **no Turnstile token** | `400 Invalid timeOfDay…` | ⚠️ Request got **past** the Turnstile gate, so `TURNSTILE_SECRET_KEY` isn't set (3P-2.1) |
+| `POST` at downtown Dallas coords | `400 Pin coordinates must be within the Flower Mound neighborhood…` | ✅ Pin geofence live |
+| `POST` malformed JSON | `400 Malformed JSON payload` | ✅ (was 500) |
+| `PUT` nonexistent id | `404` | ✅ |
+
+## 3P-1. 2nd-pass items: scorecard
+
+| Item | Status | Notes |
+|---|---|---|
+| 2P-2.1 Turnstile / rate limit | 🔴 **Not effective** | Server logic fixed (token now required *when the secret is set*) ✅. But the secret isn't set, there's still **no widget in the client**, and there's no evidence of a WAF rate-limit rule. See 3P-2.1 |
+| 2P-2.2 PUT validation | ✅ **Fixed** | `validateReportFields()` shared by POST and PUT: enums for all four categorical fields, date format and 90-day window, length caps, finite coords. Body-size cap not added (minor, 3P-3) |
+| 2P-2.3 Pin geofence / GPS | 🟡 **Mostly fixed** | Server pin box (lat 33.01–33.06, lng −97.08 to −97.02) ✅ live. Client rejects GPS fixes more than ~2.4 mi away ✅. **No map preview/confirm** before the form opens, and the radius is generous (3P-2.3) |
+| 2P-2.4 Unbound storage / KV fallback | ✅ **Fixed** | KV code removed; all four methods return `503` without `DB` |
+| 2P-2.5 Fail-open token check | ✅ **Fixed** | Rows with no hash now require the admin key |
+| 2P-2.6 Error feedback | 🟡 **Regressed** | Alerts added, but the try/catch placement swallows errors the form relies on (3P-2.2) |
+| 2P-2.7 Malformed JSON → 400 | ✅ Fixed | |
+| 2P-2.7 Per-request `CREATE TABLE` | ✅ Fixed | Removed. GET works, so the schema is applied |
+| 2P-2.7 Server UTC default date | ✅ Fixed | Date is now required and validated; no server default |
+| 2P-2.7 Error detail leakage | 🟡 Open | Responses now include `details: <raw DB error>` |
+| 2P-2.7 Tap-to-pin outside placement mode, `selectedReportId` on close, `functions/` type-check | ⬜ Not started | `Map.tsx`/`tsconfig.json` unchanged |
+| `wrangler.toml` | 🟡 **Added then removed** | See 3P-2.4 |
+| `100dvh` | ✅ Partial | `body`/`#root` use `100dvh` with a `100vh` fallback, and the app wrapper is `100%`. Safe-area padding not added |
+| Docs: AGENTS.md domain, settled.md duplicate §3 | ✅ Fixed | |
+
+## 3P-2. Remaining issues (by priority)
+
+### 3P-2.1 🟠 HIGH: Bot protection is still off in production (verified)
+
+The server code is now correct: if `TURNSTILE_SECRET_KEY` is set, a POST without a token gets `403`. **But it isn't set.** My token-less POST reached field validation and came back `400` instead of `403`. Also:
+- There's still **no Turnstile widget** anywhere in `index.html` or `src/`, and `App.tsx:139` calls `submitReport(input)` with no token.
+- **Important:** if Dave sets the secret *now*, before the widget ships, **every neighbor's submission will fail with 403.** Ship the widget first, then set the secret.
+- `settled.md` #4 and `STATUS.md` describe the app as "Protected via Cloudflare Turnstile". That's not true yet, so either fix the docs or finish the work.
+
+**Fix, in this order:**
+1. Create a Turnstile widget (Managed or Invisible) for `neighborhood-gas-map.pages.dev`. The site key is public and can go in code.
+2. Render it in the report form, put the token in the submit payload, and reset the widget after each submit (tokens are single-use).
+3. Deploy, then set `TURNSTILE_SECRET_KEY` as a Pages **secret** (Settings → Variables and Secrets → Encrypt). Keep the value in Bitwarden (`bws`), never in a file.
+4. Add a WAF rate-limiting rule (Security → WAF → Rate limiting rules) on `POST /api/reports`, for example 5 per IP per 10 minutes. Dashboard only, no code.
+
+The `turnstile-spin` skill can do steps 1–3 end to end.
+
+### 3P-2.2 🟠 HIGH (regression): A failed save closes the form and loses the neighbor's input
+
+`handleAddReport` and `handleUpdateReport` in [App.tsx:137–160](../src/App.tsx#L137-L160) now **catch the error, show an `alert`, and return normally**. `ReportModal.handleSubmit` ([ReportModal.tsx:83–110](../src/components/ReportModal.tsx#L83-L110)) treats a normal return as success and calls `onClose()`. So on any failure (a weak signal on the trail, a geofence or validation `400`, and once 3P-2.1 is done, a Turnstile `403`):
+1. The alert shows "Submission failed…".
+2. The **form closes and everything the neighbor typed is gone**.
+3. The form's own inline error box (which used to handle this correctly) never shows.
+
+Knock-on effects:
+- `handleSaveMovedPin`'s `catch` is dead code. A failed move still exits move mode, and the pin snaps back to its old spot.
+- `handleUndoRecent`'s `catch` is also dead code (harmless).
+
+**Fix:** have `handleAddReport` and `handleUpdateReport` **re-throw** after any cleanup, or drop their try/catch and let `ReportModal` show its inline error. Keep the alert/try-catch only in the handlers no form calls: delete, move-save, and undo. In `handleSaveMovedPin`, call `updateReport` directly, so a failure keeps move mode active and the user can retry.
+
+*Test:* turn on airplane mode, fill in the form, and submit. Expected: an error message inside the form with all fields still filled in.
+
+### 3P-2.3 🟡 MEDIUM: GPS button: no preview, and a generous radius
+
+The proximity check is in place (`Math.hypot(...) > 0.035°`, about 2.4 mi). Two gaps:
+- **No visual confirmation.** A GPS fix inside the radius still jumps straight into the form. The neighbor never sees where the pin landed, and phone GPS can be off by 20–50 m, which matters for "this side of the pond or that side". Better: `flyTo` the fix, show a draggable preview pin, and open the form on **Confirm**.
+- **2.4 mi is wider than the neighborhood.** Someone at the Kroger or a school pickup line ~2 miles away still passes, and their pin lands there. That's also inside the server box, so it's accepted. I'd tighten the GPS check to ~0.5 mi (`0.008°`). The server box can stay generous, since it's there to block junk, not to judge accuracy.
+- The circle and the server box don't line up exactly. A fix near the north edge (lat > 33.06) passes the client check but gets a server `400`, and with 3P-2.2 the form then closes. This edge case goes away if the GPS radius is tightened.
+
+### 3P-2.4 🟡 MEDIUM: `wrangler.toml` was added with a bad ID, then deleted
+
+`726b897` added a `wrangler.toml` with `database_id = "neighborhood-gas-db"`. That's the database *name*; `database_id` must be the D1 **UUID**. The build failed, and `de5541b` deleted the file. The binding is back to living only in the dashboard. That configuration drift is what caused P0-1 in the first place.
+- **Fix:** restore the file with the real UUID (Dashboard → Storage & Databases → D1 → `neighborhood-gas-db` → copy the Database ID, or run `wrangler d1 list`). The UUID is **not a secret** and is safe to commit. Note that once a `wrangler.toml` exists, Pages treats it as the source of truth for bindings, so it has to be correct. Test on a `feature/` branch preview deploy before merging.
+- **Docs:** `STATUS.md` still says "Configuration in Git: Added `wrangler.toml`" and links to a file that no longer exists. Correct it.
+
+### 3P-2.5 🟢 LOW: Smaller backend items
+
+- **Error detail leakage:** 500 responses now return `details: msg`, which is raw D1 error text including SQL hints. Log it with `console.error` (visible in Pages → Functions → Logs) and return only the generic message.
+- **Impossible dates pass validation:** `2026-02-31` passes the regex, and JS rolls it to Mar 3, so it's accepted and **stored as "2026-02-31"**. Fix: after parsing, check that `dateObj.toISOString().slice(0,10) === observedDate`.
+- **Edits lock after 90 days:** PUT re-validates the stored date against the 90-day window. Once a report is more than 90 days old, its owner can't move, edit, or correct it, and the error says the date is invalid. Apply the window only when `observedDate` is actually being changed.
+- **No request-size cap:** fields are capped after parsing, but the body itself isn't. Reject when `content-length` is over ~8 KB before calling `request.json()`. Low risk on Workers, but cheap.
+- **Admin key comparison** is still a plain `===` (not constant-time). Negligible at this scale; noted for completeness.
+
+### 3P-2.6 🟢 LOW: Docs accuracy
+
+- `settled.md` #4 and `STATUS.md` say Turnstile protects the app, and `STATUS.md` says `wrangler.toml` is in git. Neither is true yet (3P-2.1, 3P-2.4).
+- `settled.md` §2.3 and STATUS describe the geofence as "±0.025° … ~2.5 miles". The code uses a lat 33.01–33.06 × lng −97.08 to −97.02 box (about 3.4 × 3.5 mi) and a 0.035° GPS radius. Make the docs match the code, or vice versa.
+- `stillopen.md` is still unchanged (items #1 and #2 are settled; #3 moderation is answered).
+
+## 3P-3. Still not started from the first pass (unchanged files)
+
+`Header.tsx`, `Legend.tsx`, `ReportModal.tsx`, `ExportModal.tsx`, `Map.tsx`, `index.html`, and `types.ts` are untouched this round, so §2P-4 still applies in full. The highest-value items for older or less technical neighbors on phones:
+
+1. **Header height on phones** and **legend overlapping the floating bar** at 375 px width (§3.2, §3.3).
+2. **Re-enable pinch zoom:** `user-scalable=no` is still in `index.html` (§3.7).
+3. **Bigger tap targets** for pins and popup buttons (§3.8, §3.9).
+4. **Free-text time + independently chosen time-of-day + biased defaults** (P1-3). This one affects the *quality of the evidence* handed to Atmos, not just comfort.
+5. **Privacy copy:** a "everything here is public" note, a softer name placeholder, and `noindex` (§5).
+6. **Date-range filter** (§4.3) and **sorting by observation time** (§4.5) for the dossier.
+
+## 3P-4. Process note
+
+All three rounds of fixes went directly to `main`, and `main` deploys to the link neighbors are using. This round that meant a broken `wrangler.toml` build went to production before being reverted. For the next round, I'd strongly suggest `feature/<name>` branches, as AGENTS.md says. Cloudflare Pages automatically builds a **preview URL** for each branch, which Dave can open on a phone in the Facebook app before merging.
+
+## 3P-5. Suggested next round
+
+1. **Fix the 3P-2.2 regression** (a few lines). Highest user-facing impact.
+2. **Turnstile end to end**, in the order in 3P-2.1 (widget → deploy → secret), plus the WAF rate-limit rule.
+3. **Restore `wrangler.toml` with the real D1 UUID**, on a feature branch with a preview deploy.
+4. GPS preview/confirm and a tighter radius (3P-2.3).
+5. The low items in 3P-2.5 and the doc corrections in 3P-2.6.
+6. Then the mobile/UX/privacy pass (3P-3).
+
+After items 1–3 I'd consider the app **ready for wide sharing**. Items 4–6 improve comfort and evidence quality, but they aren't safety or integrity issues.
