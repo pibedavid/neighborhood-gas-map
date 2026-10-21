@@ -528,3 +528,109 @@ All three rounds of fixes went directly to `main`, and `main` deploys to the lin
 6. Then the mobile/UX/privacy pass (3P-3).
 
 After items 1–3 I'd consider the app **ready for wide sharing**. Items 4–6 improve comfort and evidence quality, but they aren't safety or integrity issues.
+
+---
+---
+
+# 4th Pass
+
+**Date:** October 20, 2026 (late night)
+**Commit reviewed:** `1b98281` (`main`). The live site serves the same bundle as a local build (`index-D9JA5Oe2.js`). The working tree is clean.
+**Method:** Reviewed the full diff since `de5541b` (`reports.ts`, `App.tsx`, `ReportModal.tsx`, `ExportModal.tsx`, `index.html`, STATUS, stillopen). Rebuilt locally (clean). Probed live with requests the server rejects, so nothing was written.
+
+## 4P-0. Verdict
+
+**Ready for a soft launch to the neighborhood Facebook group.** The 3rd-pass regression is fixed correctly, and every low-priority backend item I raised is done and verified live. No new bugs this round.
+
+One open item remains, and it's now a **conscious trade-off rather than an oversight**: bot protection has been explicitly moved to the backlog (`stillopen.md`). That's a reasonable call for a few dozen neighbors. Before doing it, I'd still spend **five minutes on the free WAF rate-limit rule** (4P-2.1). It needs no code and is the cheapest insurance available.
+
+### Live probe results
+
+| Probe (non-mutating) | Result | Verdict |
+|---|---|---|
+| `POST` with `observedDate: "2026-02-31"` | `400 Invalid calendar date (day does not exist in month)` | ✅ Impossible dates rejected |
+| `POST` with a 20 KB body | `400` | ✅ Size cap live (message could be clearer, 4P-3) |
+| `POST` without Turnstile token | Reaches field validation (`400` on enum) | ℹ️ Turnstile still not enforced, as documented |
+| Page `<head>` | `noindex, nofollow` present, `user-scalable=no` gone | ✅ |
+| `GET /api/reports` | `200 []` | ✅ D1 serving (no real reports yet) |
+
+## 4P-1. 3rd-pass items: scorecard
+
+| Item | Status | Notes |
+|---|---|---|
+| 3P-2.1 Turnstile / rate limit | ⏸️ **Deferred by decision** | Moved to the backlog in `stillopen.md`, with the correct rollout order (widget → secret) documented. Server logic is ready. See 4P-2.1 |
+| 3P-2.2 Failed save loses form input | ✅ **Fixed** | `handleAddReport`/`handleUpdateReport` re-throw, so `ReportModal` shows its inline error and keeps the fields. `handleSaveMovedPin`'s catch is now live, so move mode stays active for a retry. Delete/undo still alert. Exactly right |
+| 3P-2.3 GPS radius / preview | 🟡 **Partial** | Radius cut to 0.015° (~1 mi N–S, ~0.9 mi E–W) ✅, and it now sits inside the server box, so the edge mismatch is gone. **Still no map preview/confirm** before the form opens |
+| 3P-2.4 `wrangler.toml` | ✅ **Resolved by decision** | The binding stays in the dashboard, and STATUS documents where (Settings → Functions → D1 bindings). The stale "added wrangler.toml" claim is removed. I'd still prefer it in git, but this is an acceptable, documented choice |
+| 3P-2.5 Error detail leakage | ✅ Fixed | Generic client messages; raw errors go to `console.error` (Pages Functions logs) |
+| 3P-2.5 Impossible dates | ✅ Fixed (live) | Round-trip `toISOString()` check |
+| 3P-2.5 Edit lock after 90 days | ✅ Fixed | Window applies only when the date changes |
+| 3P-2.5 Request size cap | ✅ Fixed (live) | 16 KB `content-length` ceiling |
+| 3P-2.5 Admin key timing | ⬜ Open (negligible) | |
+| 3P-2.6 Docs accuracy | ✅ Mostly fixed | `stillopen.md` restructured: foundational items settled, backlog listed. Turnstile now described honestly. Small leftovers in 4P-3 |
+| Extra: CSV formula check | ✅ Improved | Now also catches leading whitespace (`/^\s*[=+\-@…]/`) |
+| Extra: privacy copy | ✅ Added | "Community Record… publicly visible" notice above Submit, and a softer placeholder |
+| Extra: pinch zoom | ✅ Fixed | `maximum-scale`/`user-scalable=no` removed |
+
+## 4P-2. Before (or right after) sharing the link
+
+### 4P-2.1 🟡 Add the free WAF rate-limit rule, even with Turnstile deferred
+
+With Turnstile off, nothing limits how fast one source can submit. The geofence and validator make junk *well-formed*, but they don't make it *rare*: a simple loop can still drop a few hundred valid-looking pins inside the neighborhood box. Soft delete means nothing is lost, but cleanup would be manual SQL.
+
+**Recommendation (about 5 minutes, dashboard only, no deploy):** Cloudflare dashboard → the zone/project → Security → WAF → **Rate limiting rules** → *If* URI path equals `/api/reports` **and** method equals `POST` → *Then* Block for 10 minutes when more than **5 requests per 10 minutes per IP**. No real neighbor will ever hit that. It's included on the free plan.
+
+> **Note:** WAF rules apply to zones (custom domains). Rate limiting may not be available for a bare `*.pages.dev` hostname. If the dashboard doesn't offer it for this project, the fallback is a ~10-line per-IP counter in D1 inside `onRequestPost` (`CF-Connecting-IP` header + a `rate_limits` table). Either way, worth doing before the link spreads beyond the group.
+
+### 4P-2.2 🟢 Keep a cleanup recipe handy
+
+If spam does happen, Dave can recover in the D1 console (Dashboard → Storage & Databases → D1 → `neighborhood-gas-db` → Console) without any code:
+
+```sql
+-- See what came in recently
+SELECT id, created_at, lat, lng, reported_by, substr(notes,1,60) FROM reports
+WHERE is_deleted = 0 ORDER BY created_at DESC LIMIT 50;
+
+-- Soft-hide everything after a known-good timestamp (reversible)
+UPDATE reports SET is_deleted = 1, updated_at = datetime('now')
+WHERE created_at > '2026-10-21T03:00:00Z';
+
+-- Undo the above if needed
+UPDATE reports SET is_deleted = 0 WHERE created_at > '2026-10-21T03:00:00Z';
+```
+
+I'd add this to `STATUS.md` or a short `docs/RUNBOOK.md` so it's there when needed.
+
+## 4P-3. Low / polish (no rush)
+
+- **GPS preview:** after a GPS fix, fly the map to it and show a draggable preview pin with Confirm, rather than going straight to the form (carried over from 3P-2.3).
+- **Oversize message:** a body over 16 KB returns `400 "Malformed JSON payload"`. `413 "Report too large"` would be clearer. Also, a request with no `content-length` header (chunked) skips the check. That's harmless in practice, since the field caps still apply.
+- **Placeholder** still suggests "Dave G." as the example name. "e.g. D.G. or Pond neighbor" sets a more private norm.
+- **`noindex` covers the page, not the API.** `/api/reports` has no `X-Robots-Tag`. It isn't linked anywhere, so the risk is minimal, but `X-Robots-Tag: noindex` on the GET response costs one line.
+- **STATUS.md** says "Both Claude Code and Codex completed their 3rd review pass… Verified strong". That's fair for the backend. It also says "Ready for… community sharing!". I agree for a soft launch, with 4P-2.1 noted.
+
+## 4P-4. Still not started (comfort and evidence quality, not safety)
+
+Unchanged since the first pass. All of these are optional for a soft launch, but worth a future round once real reports start coming in:
+
+1. **Data quality of the dossier:** free-text time, time of day chosen separately from the time entered, and defaults (moderate / rotten-egg / light breeze) that bias skimmers (P1-3). *This is the one I'd prioritize next.* It affects what Atmos actually sees.
+2. **Phone layout:** header height, legend overlapping the floating bar at 375 px, small tap targets on pins and popup buttons (§3.2, §3.3, §3.8, §3.9).
+3. **Dossier usefulness:** date-range filter (now in the backlog ✅), sort by observation time, export colors matching the map, per-pin Google Maps links (§4.3–§4.7).
+4. **Map behavior:** tapping outside placement mode still opens the form; the last popup can re-open on refresh (Map.tsx unchanged).
+5. **Engineering:** `functions/` not type-checked, no tests, no CSP header (§5, §6).
+
+## 4P-5. Process note
+
+This round also went straight to `main`. It worked out (no breakage), but the `feature/` branch + Pages preview URL flow from AGENTS.md is still the recommendation for future changes now that neighbors will be using the live link.
+
+## 4P-6. Bottom line
+
+| Area | State |
+|---|---|
+| Data persistence & sharing | ✅ Solid (D1, verified live) |
+| Security (XSS, auth, validation, fail-closed) | ✅ Solid |
+| Abuse resistance | 🟡 Geofence + validation + soft delete; no rate limit or Turnstile yet (deferred) |
+| Core reporting UX | ✅ Placement mode, GPS with proximity check, undo/move/edit, errors keep input |
+| Mobile comfort & evidence quality | 🟡 Usable; first-pass polish items still open |
+
+**Go for the soft launch.** Add the rate-limit rule (or the D1 counter) when you can, and plan one more round on form data quality before the dossier goes to Atmos/HOA.

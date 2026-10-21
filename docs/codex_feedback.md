@@ -226,3 +226,46 @@ The privacy/retention disclosure, full keyboard/dialog accessibility pass, and d
 - Static review of D1-only endpoints, shared validation, authorization, client error paths, GPS placement, mobile CSS, and Git changes: **PASS with the remaining findings above**.
 - Automated unit/integration/end-to-end tests: **not present**.
 - Independent live Pages/D1/Turnstile/WAF verification: **not completed** in this review environment.
+
+## Fourth pass — October 20, 2026
+
+**Scope:** Review of `1b98281` and the current `main` source, with another clean production build.
+
+**Fourth-pass verdict:** The third-pass form-recovery, strict-date, error-privacy, payload-size, privacy-disclosure, and mobile zoom fixes are verified. The server-side data and authorization boundaries are in good shape for a controlled pilot. The outstanding release concern is unchanged: public writes still lack an operational bot gate and rate limit. The status document now says so plainly, which is an improvement, but it is not a substitute for the control.
+
+### Verified resolutions from the third pass
+
+- **P1 form/edit recovery — resolved.** `handleAddReport` and `handleUpdateReport` now rethrow failures. `ReportModal` catches them, shows its inline error state, and does not close or discard entered values. Failed move saves retain move mode for retry.
+- **P2 impossible calendar dates — resolved.** The validator compares the parsed ISO date back to the submitted value, preventing JavaScript date rollover such as `2026-02-31`.
+- **P2 implementation-error disclosure — resolved.** GET/POST/PUT/DELETE now log the underlying D1 error server-side and return a generic client error rather than database details.
+- **Payload limit — improved.** JSON requests with a declared content length over 16 KB are rejected before parsing. Field limits remain in place.
+- **Privacy/mobile improvements — verified.** The submission form now discloses that reports are public community records; the identity placeholder is less personally identifying; page indexing is discouraged with `noindex, nofollow`; and viewport metadata no longer disables pinch-to-zoom.
+- **Operational documentation — corrected.** `STATUS.md` now accurately describes the D1 binding as Cloudflare Pages-dashboard managed and does not claim that a nonexistent `wrangler.toml` is committed.
+- `npm run build`: **PASS** — TypeScript and Vite complete cleanly; current JavaScript output is 422.77 kB / 127.07 kB gzip.
+
+### Remaining findings
+
+#### P1 — Public-write spam protection is still pending
+
+There is still no Turnstile widget or token-acquisition code in the client, so normal `submitReport(input)` calls supply no challenge token. The server correctly requires a token only after `TURNSTILE_SECRET_KEY` is configured; until then, the endpoint remains open. Enabling the secret before wiring the widget would block legitimate reporters, and leaving it unset permits scripted in-bounds spam. No rate-limiting control can be confirmed from the repository.
+
+Recommendation: complete this as one deployment-tested sequence: create/configure the managed Turnstile widget, render it in the report flow, pass and reset the token, test normal and invalid-token submissions on a preview deployment, then add the secret. Also add a Cloudflare WAF rate-limit rule on `POST /api/reports` and document the chosen threshold and exception/review process. Until both controls are verified, keep distribution limited to a pilot group and monitor the D1 log.
+
+#### P2 — Accessibility and usability follow-through remains incomplete
+
+The report-time cards remain clickable `div` elements rather than keyboard-operable controls, and the modals still lack dialog semantics, Escape handling, focus trapping/return, and labelled close buttons. The privacy disclosure is a helpful first step, but a retention/deletion policy and an explicit statement that exact locations and entered names are visible remain undecided. Date filtering is still declared in state but not exposed/applied in the UI.
+
+Recommendation: schedule this as the next product-quality pass, especially before a wider public share. Use native radio inputs or buttons for time selection and a tested accessible-dialog primitive/pattern for every modal.
+
+#### P2 — Automated and independently deployed testing are still absent
+
+The repeated builds establish compile/bundle health only. There are no committed unit, integration, or end-to-end tests for validator boundary values, authorization failures, CSV sanitization, or report create/edit/delete behavior. This review environment also could not independently reach the live Pages endpoint.
+
+Recommendation: add a small test suite around the pure validation/CSV helpers and an API integration smoke test against an isolated D1 environment. Retain the existing operator live round-trip check, but run it against a test/preview dataset rather than the community evidence log.
+
+### Fourth-pass test record
+
+- `npm run build`: **PASS** — clean TypeScript/Vite production build.
+- Static review of the fourth-pass changes and all prior release blockers: **PASS, except for the outstanding Turnstile/rate-limit control and P2 follow-through listed above**.
+- Automated tests: **not present**.
+- Independent live Pages/D1/WAF check: **not completed** in this review environment.

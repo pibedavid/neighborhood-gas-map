@@ -159,15 +159,16 @@ function validateReportFields(
   };
 }
 
-async function parseJsonBody(request: Request): Promise<Record<string, unknown> | null> {
+async function parseJsonBody(request: Request): Promise<{ data: Record<string, unknown> | null; tooLarge?: boolean }> {
   const contentLength = Number(request.headers.get('content-length') || 0);
   if (contentLength > 16384) {
-    return null;
+    return { data: null, tooLarge: true };
   }
   try {
-    return (await request.json()) as Record<string, unknown>;
+    const data = (await request.json()) as Record<string, unknown>;
+    return { data };
   } catch {
-    return null;
+    return { data: null };
   }
 }
 
@@ -193,7 +194,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-cache',
+        'X-Robots-Tag': 'noindex'
       }
     });
   } catch (err: unknown) {
@@ -218,7 +220,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     });
   }
 
-  const body = await parseJsonBody(context.request);
+  const { data: body, tooLarge } = await parseJsonBody(context.request);
+  if (tooLarge) {
+    return new Response(JSON.stringify({ error: 'Payload too large (max 16KB)' }), {
+      status: 413,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
   if (!body) {
     return new Response(JSON.stringify({ error: 'Malformed JSON payload' }), {
       status: 400,
@@ -342,7 +350,13 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     });
   }
 
-  const body = await parseJsonBody(context.request);
+  const { data: body, tooLarge } = await parseJsonBody(context.request);
+  if (tooLarge) {
+    return new Response(JSON.stringify({ error: 'Payload too large (max 16KB)' }), {
+      status: 413,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
   if (!body) {
     return new Response(JSON.stringify({ error: 'Malformed JSON payload' }), {
       status: 400,

@@ -364,7 +364,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
             <input
               type="text"
               className="form-input"
-              placeholder="e.g. Dave G., Pond neighbor, Golden Aspen resident (optional)"
+              placeholder="e.g. D.G., Pond neighbor, Golden Aspen resident (optional)"
               value={reportedBy}
               onChange={(e) => setReportedBy(e.target.value)}
             />
